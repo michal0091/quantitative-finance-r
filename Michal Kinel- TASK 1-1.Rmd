@@ -1,0 +1,687 @@
+---
+title: "TASK 1- Exercise 1"
+author: "Michal Kinel"
+date: '`r Sys.Date()`'
+output:
+  html_document:
+    toc: yes
+    number_sections: yes
+  html_notebook:
+    toc: yes
+    number_sections: yes
+  pdf_document:
+    toc: yes
+    number_sections: yes
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+#SECTION 1
+
+##FIST STEP: LOAD THE PACKAGES
+
+In first place, we have to load all the packages we will use.
+
+
+```{r packages, warning=FALSE, error=FALSE, message=FALSE}
+library(quantmod)
+library(PerformanceAnalytics)
+library(dygraphs)
+library(timeDate)
+library(d3heatmap)
+library(shiny)
+```
+
+Note: I used some new libraries like **d3heatmap** and a complementary **shiny**. It's a library for interactive heat graph.
+
+##DATA: DOWNLOADING & MANAGING
+
+We will start downloading the data of stock exchange EUROSTOXX 50,known at YaHoo Financial as STOXX50E and several Prices as well.
+
+### Download STOXX50E Stock Exchange
+
+After downloading we plot the data.
+
+```{r stock data}
+getSymbols("^STOXX50E", from='2000-01-01')
+STOXX50E <- STOXX50E[complete.cases(STOXX50E),]
+head(STOXX50E)
+names(STOXX50E)
+chartSeries(STOXX50E, type = c("auto", "line"), theme = chartTheme('white',up.col='dodgerblue3',dn.col='dodgerblue4'))
+
+```
+
+### Downloading Several Prices
+
+In this section we download the data of several prices from STOXX50E:
+
+* **ASML.AS**- ASML Holding N.V.
+* **BAYN.DE**- Bayer AG *(multinational chemical, pharmaceutical and life sciences company)*
+* **BNP.PA**- BNP Paribas S.A. *( international banking group)*
+* **DTE.DE**- Deutsche Telekom AG *(telecommunications company)*
+
+```{r prices data}
+getSymbols(c("ASML.AS", "BAYN.DE", "BNP.PA", "DTE.DE"), from='2000-01-01')
+```
+
+#### Plot the Prices
+
+Now we plot this prices and add some indicators:
+* **addVo**- adds volume indicator
+* **addBBands**- adds Bollinger Bands indicator
+* **addCCI**- Commodity Channel Index indicator
+
+
+
+
+```{r}
+chartSeries(ASML.AS,  theme=chartTheme('white',up.col='dodgerblue',dn.col='dodgerblue4'), 
+            subset='last 6 months', TA="addVo();addBBands();addCCI()", type = "line", name ="ASML Holding N.V.")
+chartSeries(BAYN.DE,  theme=chartTheme('white', up.col='dodgerblue',dn.col='dodgerblue4'), 
+            subset='last 6 months', TA="addVo();addBBands();addCCI()", type = "line", name="Bayer AG")
+chartSeries(BNP.PA,  theme=chartTheme('white', up.col='dodgerblue',dn.col='dodgerblue4'), 
+            subset='last 6 months', TA="addVo();addBBands();addCCI()", type = "line", name= "BNP Paribas S.A.")
+chartSeries(DTE.DE,  theme=chartTheme('white', up.col='dodgerblue',dn.col='dodgerblue4'), 
+            subset='last 6 months', TA="addVo();addBBands();addCCI()", type = "line", name="Deutsche Telekom AG")
+
+```
+
+
+### Merging Data
+
+Now we are merging the data, creating a new data set in which all the variable have the same dates, also we omit all NAs because of future problems with the calculus.
+
+```{r merge}
+newdata <- merge(STOXX50E$STOXX50E.Adjusted, ASML.AS$ASML.AS.Adjusted, BAYN.DE$BAYN.DE.Adjusted,BNP.PA$BNP.PA.Adjusted, DTE.DE$DTE.DE.Adjusted)
+
+newdata <- na.omit(newdata)
+
+names(newdata)
+```
+
+Now we change the names of all prices
+
+```{r newnames}
+names(newdata) <- c("STOXX50E","ASML.AS", "BAYN.DE", "BNP.PA", "DTE.DE")
+```
+
+the next step is the extraction of the elements
+
+```{r}
+STOXX50E <- newdata$STOXX50E
+ASML.AS <- newdata$ASML.AS
+BAYN.DE <- newdata$BAYN.DE
+BNP.PA <- newdata$BNP.PA
+DTE.DE <- newdata$DTE.DE
+```
+
+
+
+## RETURNS CALCULATION
+
+### Definitions
+
+Return:
+
+$$ R_t = \dfrac{P_t - P_{t-1}}{P_{t-1}} = \dfrac{P_t}{P_{t-1}} - 1$$
+Continuously compounded return (log-return)
+
+$$ r_t = \Delta \log P_t = \log(P_t) - \log(P_{t-1}) = 
+\log \dfrac{P_t}{P_{t-1}}$$
+
+Relationship
+$$ R_t = \exp(r_t) - 1$$
+
+Now we calculate the **Return** and **Continuously compounded return** applying the definitions. 
+
+### Quantmod & Jointly
+
+This is a basic financial package we can use to calculate returns. There is another financial package called **PerformanceAnalytics** that includes a command to calculate returns as well.
+
+```{r retquantmod}
+RSTOXX50E <- Delt(STOXX50E, type="arithmetic")
+rSTOXX50E <- Delt(STOXX50E, type="log")
+
+head(rSTOXX50E)
+head(RSTOXX50E)
+head(exp(rSTOXX50E) - 1)
+
+```
+
+
+
+Thanks to merging data with **merge** command we can simultaneously calculate the returns for all the assets of the data frame.
+
+```{r joint}
+rdata <- Return.calculate(newdata, method="log")
+Rdata <- Return.calculate(newdata, method="discrete")
+
+head(rdata)
+head(Rdata)
+
+```
+
+```{r omit NAs}
+rdata <- na.omit(rdata)
+Rdata <- na.omit(Rdata)
+```
+
+```{r newnames-rdata}
+names(rdata) <- c("rSTOXX50E","rASML.AS", "rBAYN.DE", "rBNP.PA", "rDTE.DE")
+names(rdata)
+```
+
+
+
+```{r}
+rSTOXX50E <- rdata$rSTOXX50E
+rASML.AS <- rdata$rASML.AS
+rBAYN.DE <- rdata$rBAYN.DE
+rBNP.PA <- rdata$rBNP.PA
+rDTE.DE <- rdata$rDTE.DE
+```
+
+
+
+## CORRELATION
+
+
+Correlations are a linear concept
+$$ y = \beta x + u$$
+
+
+Then $\beta$ is proportional to the correlation between $x$ and $y$
+
+A different way to say that is linear dependence
+
+The relationship between the two variables is always the
+same regardless of the magnitude of the variables
+
+Under the normal distribution, dependence is linear.
+
+### Serial Correlation
+
+Using the *forecast* library we can plot 
+
+```{r ACF, warning=FALSE, error=FALSE}
+library(forecast)
+tsdisplay(rSTOXX50E, main = "STOXX50E")
+tsdisplay(rASML.AS, main = "ASML Holding NV")
+tsdisplay(rBAYN.DE, main = "Bayer AG")
+tsdisplay(rBNP.PA, main = "BNP Paribas S.A.")
+tsdisplay(rDTE.DE, main ="Deutsche Telekom AG")
+```
+
+### Correlation and HeatMap
+
+
+
+Generate correlation matrix
+
+```{r correlationMatrix}
+Rmatrix <- as.matrix(Rdata[-1,])
+M <- cor(Rmatrix, use="complete.obs") 
+M
+M <- round(M,4)
+M
+```
+
+Generate heatmap
+
+```{r heatmap}
+
+d3heatmap(M, dendrogram = "none",
+    color = "Blues", title="Correlation Heatmap")
+
+```
+
+Heatmap shows the correlations between all inputs and the dark blue means that there is a high level of correlation and the clear ones the oposit. 
+
+# SECTION 2- Are Correlations Constant over Time?
+
+In this section we will try to assess the constancy of correlation over the time. We will use the log-returns of the prices. 
+1. First step is the extraction of the related data from our Rmatrix (Correlation matrix).
+2. Then we array with *dim*, this attribute is an integer vector of length one or more containing non-negative values.
+3. We define the k dimension. Recursive correlation starting at observation 100.
+4. Apply our dimension to vectors.
+5. Calculate the correlation.
+6. Create xts object from the data we prepared.
+7. Plot the recursive correlation.
+
+The next step consist in modify this approach. We will calculate the correlation between the sub vectors of a fixed size of the matrix (N=100). This is what we call the **rolling** approach.
+
+The importance of this demostratios is to show that the correlation is **not** constant over the time, so the investors can see that their portfolio has to be adapted by the changes in the correlation between the portfolio componets and thereference index.
+
+## correlations between the Prices
+
+As we can see on the graphs down below almost all the **Recursive COrrelations** increased between 2001 and 2004. The exception is the relation ASML.AS-DTE.DE witch decreased in this period. There is an change on the correlation series around the financial crisis period as well. This information is crusial for the creation of the portfolio.
+
+The **Roling Correlation** shows a big variability of the correlation in all cases.
+
+### ASML.AS-BAYN.DE
+
+```{r constancycor23_1}
+
+mX23 <- Rmatrix[,2]
+mY23 <- Rmatrix[,3]
+k0 <- 99
+T <- length(mX23)
+cXY23 <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  vX23 <- mX23[1:k]
+  vY23 <- mY23[1:k]
+  cXY23[i] <- cor(vX23, vY23)
+}
+cXY23 <- xts(cXY23, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY23, main = "Recursive Correlation: ASML.AS-BAYN.DE") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)%>%
+  dyShading(from = "2000-05-26", to = "2004-01-01", color = "#FFE6E6") %>%
+  dyShading(from = "2008-09-01", to = "2010-01-01", color = "#FFE6E6")
+
+
+```
+
+
+
+```{r conscor23_2}
+N <- 100
+cXY23 <- array(dim=(T-N+1))
+for(i in 1:(T-N+1))
+{
+  vX23 <- mX23[i:(i+N)]
+  vY23 <- mY23[i:(i+N)]
+  cXY23[i] <- cor(vX23,vY23)
+}
+cXY23 <- xts(cXY23, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY23, main = "Rolling Correlation: ASML.AS-BAYN.DE") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)
+```
+
+
+
+### ASML.AS-BNP.PA
+```{r constancycor24_1}
+
+mX24 <- Rmatrix[,2]
+mY24 <- Rmatrix[,4]
+k0 <- 99
+T <- length(mX24)
+cXY24 <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  vX24 <- mX24[1:k]
+  vY24 <- mY24[1:k]
+  cXY24[i] <- cor(vX24, vY24)
+}
+cXY24 <- xts(cXY24, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY24, main = "Recursive Correlation: ASML.AS-BNP.PA") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)%>%
+  dyShading(from = "2000-05-26", to = "2004-01-01", color = "#FFE6E6") %>%
+  dyShading(from = "2008-09-01", to = "2010-01-01", color = "#FFE6E6")
+```
+
+
+
+```{r conscor24_2}
+N <- 100
+cXY24 <- array(dim=(T-N+1))
+for(i in 1:(T-N+1))
+{
+  vX24 <- mX24[i:(i+N)]
+  vY24 <- mY24[i:(i+N)]
+  cXY24[i] <- cor(vX24,vY24)
+}
+cXY24 <- xts(cXY24, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY24, main = "Rolling Correlation: ASML.AS-BNP.PA") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)
+```
+
+### ASML.AS-DTE.DE
+
+
+```{r constancycor25_1}
+
+mX25 <- Rmatrix[,2]
+mY25 <- Rmatrix[,5]
+k0 <- 99
+T <- length(mX25)
+cXY25 <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  vX25 <- mX25[1:k]
+  vY25 <- mY25[1:k]
+  cXY25[i] <- cor(vX25, vY25)
+}
+cXY25 <- xts(cXY25, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY25, main = "Recursive Correlation: ASML.AS-DTE.DE") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)%>%
+  dyShading(from = "2000-05-26", to = "2004-01-01", color = "#FFE6E6") %>%
+  dyShading(from = "2008-09-01", to = "2010-01-01", color = "#FFE6E6")
+```
+
+
+
+```{r conscor25_2}
+N <- 100
+cXY25 <- array(dim=(T-N+1))
+for(i in 1:(T-N+1))
+{
+  vX25 <- mX25[i:(i+N)]
+  vY25 <- mY25[i:(i+N)]
+  cXY25[i] <- cor(vX25,vY25)
+}
+cXY25 <- xts(cXY25, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY25, main = "Rolling Correlation: ASML.AS-DTE.DE") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)
+```
+
+
+
+### BAYN.DE-BNP.PA
+
+
+```{r constancycor34_1}
+
+mX34 <- Rmatrix[,3]
+mY34 <- Rmatrix[,4]
+k0 <- 99
+T <- length(mX34)
+cXY34 <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  vX34 <- mX34[1:k]
+  vY34 <- mY34[1:k]
+  cXY34[i] <- cor(vX34, vY34)
+}
+cXY34 <- xts(cXY34, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY34, main = "Recursive Correlation: BAYN.DE-BNP.PA") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)%>%
+  dyShading(from = "2000-05-26", to = "2004-01-01", color = "#FFE6E6") %>%
+  dyShading(from = "2008-09-01", to = "2010-01-01", color = "#FFE6E6")
+```
+
+
+
+```{r conscor34_2}
+N <- 100
+cXY34 <- array(dim=(T-N+1))
+for(i in 1:(T-N+1))
+{
+  vX34 <- mX34[i:(i+N)]
+  vY34 <- mY34[i:(i+N)]
+  cXY34[i] <- cor(vX34,vY34)
+}
+cXY34 <- xts(cXY34, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY34, main = "Rolling Correlation: BAYN.DE-BNP.PA") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)
+```
+
+
+
+### BAYN.DE-DTE.DE
+
+
+```{r constancycor35_1}
+
+mX35 <- Rmatrix[,3]
+mY35 <- Rmatrix[,5]
+k0 <- 99
+T <- length(mX35)
+cXY35 <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  vX35 <- mX35[1:k]
+  vY35 <- mY35[1:k]
+  cXY35[i] <- cor(vX35, vY35)
+}
+cXY35 <- xts(cXY35, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY35, main = "Recursive Correlation: BAYN.DE-DTE.DE") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)%>%
+  dyShading(from = "2000-05-26", to = "2004-01-01", color = "#FFE6E6") %>%
+  dyShading(from = "2008-09-01", to = "2010-01-01", color = "#FFE6E6")
+```
+
+
+```{r conscor35_2}
+N <- 100
+cXY35 <- array(dim=(T-N+1))
+for(i in 1:(T-N+1))
+{
+  vX35 <- mX35[i:(i+N)]
+  vY35 <- mY35[i:(i+N)]
+  cXY35[i] <- cor(vX35,vY35)
+}
+cXY35 <- xts(cXY35, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY35, main = "Rolling Correlation: BAYN.DE-DTE.DE") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)
+```
+
+
+### BNP.PA-DTE.DE
+```{r constancycor45_1}
+
+mX45 <- Rmatrix[,4]
+mY45 <- Rmatrix[,5]
+k0 <- 99
+T <- length(mX45)
+cXY45 <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  vX45 <- mX45[1:k]
+  vY45 <- mY45[1:k]
+  cXY45[i] <- cor(vX45, vY45)
+}
+cXY45 <- xts(cXY45, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY45, main = "Recursive Correlation: BNP.PA-DTE.DE") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)%>%
+  dyShading(from = "2000-05-26", to = "2004-01-01", color = "#FFE6E6") %>%
+  dyShading(from = "2008-09-01", to = "2010-01-01", color = "#FFE6E6")
+```
+
+```{r conscor45_2}
+N <- 100
+cXY45 <- array(dim=(T-N+1))
+for(i in 1:(T-N+1))
+{
+  vX45 <- mX45[i:(i+N)]
+  vY45 <- mY45[i:(i+N)]
+  cXY45[i] <- cor(vX45,vY45)
+}
+
+cXY45 <- xts(cXY45, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY45, main = "Rolling Correlation: BNP.PA-DTE.DE") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)
+
+```
+
+## Correlations between the Index and the Prices
+
+Now we check the correlation between the Prices and STOXX50.
+
+As we can see on the graphs below there are two cases of the correlation changes over the time.
+1. Corrlation between the index and **ASML** & **DTE**; the correlation decreased since 2004 in ASML case and since 2000 in case of Deutsche Telekom.
+2.  Corrlation between the index and **BAYN** & **BNP**; the correlation increased since 2001 very fastly and later got stabilized on high values.
+
+he **Roling Correlation** shows a big variability of the correlation in all cases.
+
+### STOXX50- ASML.AS
+
+```{r constancycor12_1}
+
+mX12 <- Rmatrix[,1]
+mY12 <- Rmatrix[,2]
+k0 <- 99
+T <- length(mX12)
+cXY12 <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  vX12 <- mX12[1:k]
+  vY12 <- mY12[1:k]
+  cXY12[i] <- cor(vX12, vY12)
+}
+cXY12 <- xts(cXY12, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY12, main = "Recursive Correlation: STOXX50- ASML.AS") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)%>%
+  dyShading(from = "2000-05-26", to = "2004-01-01", color = "#FFE6E6") %>%
+  dyShading(from = "2008-09-01", to = "2010-01-01", color = "#FFE6E6")
+```
+
+
+
+```{r constancycor12_2 }
+N <- 100
+cXY12 <- array(dim=(T-N+1))
+for(i in 1:(T-N+1))
+{
+  vX12 <- mX12[i:(i+N)]
+  vY12 <- mY12[i:(i+N)]
+  cXY12[i] <- cor(vX12,vY12)
+}
+cXY12 <- xts(cXY12, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY12, main = "Rolling Correlation: STOXX50- ASM.AS") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)
+```
+
+### STOXX50- BAYN.DE
+
+```{r constancycor13_1}
+
+mX13 <- Rmatrix[,1]
+mY13 <- Rmatrix[,3]
+k0 <- 99
+T <- length(mX13)
+cXY13 <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  vX13 <- mX13[1:k]
+  vY13 <- mY13[1:k]
+  cXY13[i] <- cor(vX13, vY13)
+}
+cXY13 <- xts(cXY13, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY13, main = "Recursive Correlation: STOXX50- BAYN.DE") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)%>%
+  dyShading(from = "2000-05-26", to = "2004-01-01", color = "#FFE6E6") %>%
+  dyShading(from = "2008-09-01", to = "2010-01-01", color = "#FFE6E6")
+```
+
+
+
+```{r constancycor13_2}
+N <- 100
+cXY13 <- array(dim=(T-N+1))
+for(i in 1:(T-N+1))
+{
+  vX13 <- mX13[i:(i+N)]
+  vY13 <- mY13[i:(i+N)]
+  cXY13[i] <- cor(vX13,vY13)
+}
+cXY13 <- xts(cXY13, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY13, main = "Rolling Correlation: STOXX50- BAYN.DE") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)
+```
+
+
+### STOXX50- BNP.PA
+
+```{r constancycor14_1}
+
+mX14 <- Rmatrix[,1]
+mY14 <- Rmatrix[,4]
+k0 <- 99
+T <- length(mX14)
+cXY14 <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  vX14 <- mX14[1:k]
+  vY14 <- mY14[1:k]
+  cXY14[i] <- cor(vX14, vY14)
+}
+cXY14 <- xts(cXY14, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY14, main = "Recursive Correlation: STOXX50- BNP.PA") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)%>%
+  dyShading(from = "2000-05-26", to = "2004-01-01", color = "#FFE6E6") %>%
+  dyShading(from = "2008-09-01", to = "2010-01-01", color = "#FFE6E6")
+```
+
+
+
+```{r  constancycor14_2}
+N <- 100
+cXY14 <- array(dim=(T-N+1))
+for(i in 1:(T-N+1))
+{
+  vX14 <- mX14[i:(i+N)]
+  vY14 <- mY14[i:(i+N)]
+  cXY14[i] <- cor(vX14,vY14)
+}
+cXY14 <- xts(cXY14, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY14, main = "Rolling Correlation: STOXX50- BNP.PA") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)
+```
+
+### STOXX50- DTE.DE
+
+```{r constancycor15_1}
+
+mX15 <- Rmatrix[,1]
+mY15 <- Rmatrix[,5]
+k0 <- 99
+T <- length(mX15)
+cXY15 <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  vX15 <- mX15[1:k]
+  vY15 <- mY15[1:k]
+  cXY15[i] <- cor(vX15, vY15)
+}
+cXY15 <- xts(cXY15, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY15, main = "Recursive Correlation: STOXX50- DTE.DE") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)%>%
+  dyShading(from = "2000-05-26", to = "2004-01-01", color = "#FFE6E6") %>%
+  dyShading(from = "2008-09-01", to = "2010-01-01", color = "#FFE6E6")
+```
+
+
+
+```{r  constancycor15_2 }
+N <- 100
+cXY15 <- array(dim=(T-N+1))
+for(i in 1:(T-N+1))
+{
+  vX15 <- mX15[i:(i+N)]
+  vY15 <- mY15[i:(i+N)]
+  cXY15[i] <- cor(vX15,vY15)
+}
+cXY15 <- xts(cXY15, index(rSTOXX50E)[(k0+2):(T+1)])
+dygraph(cXY15, main = "Rolling Correlation: STOXX50- DTE.DE") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
