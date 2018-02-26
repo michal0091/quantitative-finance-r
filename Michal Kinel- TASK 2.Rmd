@@ -1,0 +1,1729 @@
+---
+title: "TASK 2"
+author: "Michal Kinel"
+date: '`r Sys.Date()`'
+output:
+  html_document:
+    toc: yes
+    number_sections: yes
+  html_notebook:
+    toc: yes
+    number_sections: yes
+  pdf_document:
+    toc: yes
+    number_sections: yes
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Carga de paquetes
+
+Comenzamos la tarea cargando los paquetes que serán necesarios.
+
+```{r packages, warning= FALSE, error=FALSE, message=FALSE}
+library(quantmod)
+library(PerformanceAnalytics)
+library(dygraphs)
+library(forecast)
+library(FinTS)
+library(rugarch)
+library(gets)
+library(ggplot2)
+library(car)
+library(astsa)
+library(parallel)
+library(tseries)
+library(dynlm)
+library(tseries)
+library(forecast)
+library(lmtest)
+library(sandwich)
+library(plotly)
+library(tsoutliers)
+library(urca)
+library(gets)
+library(dyn)
+library(cointReg)
+library(ggplot2)
+library(zoo)
+library(vars)
+
+```
+
+# Descarga y manejo de datos
+
+Descargamos 3 valores del índice EUROSTOX50:
+
+
+* **ASML.AS**- ASML Holding N.V.
+* **BAYN.DE**- Bayer AG 
+* **BNP.PA**- BNP Paribas S.A.
+
+```{r descarga_datos, warning= FALSE, error=FALSE, message=FALSE}
+getSymbols(c("^STOXX50E","ASML.AS", "BAYN.DE", "BNP.PA"), from= '2005-01-03' )
+# descargar el tipo de interés
+getSymbols("DTB3", src = "FRED", from= '2005-01-03' )
+```
+Anualizamos los tipos de los Bonos Alemanes a 10 años:
+
+```{r}
+DTB3 <- DTB3/(253)
+```
+
+
+
+
+
+Seleccionamos los datos ajustasos y los unimos con *merge* en caso de ralizar tratamiento de datos conjunto:
+
+
+```{r merge}
+fdata <- merge(STOXX50E$STOXX50E.Adjusted, ASML.AS$ASML.AS.Adjusted, BAYN.DE$BAYN.DE.Adjusted,BNP.PA$BNP.PA.Adjusted)
+
+names(fdata) <- c("EUROSTOX", "ASML", "BAYN", "BNP")
+
+
+```
+
+Por el otro lado, extraemos los datos por si fuera necesario tratamiento individual.
+
+```{r extract_data}
+EUROSTOX <- fdata$EUROSTOX
+ASML <- fdata$ASML
+BAYN <- fdata$BAYN
+BNP <- fdata$BNP
+
+```
+
+Veamos la representación gráfica de los valores obtenidos:
+
+```{r}
+dygraph(EUROSTOX, main = "EUROSTOX50") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+
+dygraph(ASML, main = "ASML Holding N.V.") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+
+dygraph(BAYN, main = "Bayer AG") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+
+dygraph(BNP, main = "BNP Paribas S.A.") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+
+```
+
+
+
+
+
+## Cálculo de los retornos como porcentaje
+
+```{r retornos}
+rdata <- Return.calculate(fdata, method = "log")*100
+
+rdata <- na.omit(merge(rdata, DTB3))
+
+head(rdata)
+
+
+```
+
+ Extraemos los datos:
+ 
+```{r}
+rESX<- rdata$EUROSTOX
+rASML <- rdata$ASML
+rBAYN <- rdata$BAYN
+rBNP <- rdata$BNP
+DTB3 <- rdata$DTB3
+```
+
+
+
+
+Calculamos los "clean data" para los valores:
+
+```{r, warning= FALSE, error=FALSE, message=FALSE}
+rESXc <- Return.clean(rESX, method = "boudt")
+rASMLc <- Return.clean(rASML, method = "boudt")
+rBAYNc <- Return.clean(rBAYN, method = "boudt")
+rBNPc <- Return.clean(rBNP, method = "boudt")
+
+```
+Veamos los retornos:
+
+
+```{r}
+dygraph(rESX, main = "Rendimientos de índice EUROSTOX50") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+
+dygraph(rASML, main = "Rendimientos de ASML Holding N.V.") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+
+dygraph(rBAYN, main = "Rendimientos de Bayer AG") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+
+dygraph(rBNP, main = "Rendimientos de BNP Paribas S.A.") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+
+```
+
+
+
+# Apartado 1
+
+En primer lugar vamos a verificar si alguno de los retornos de los activos tiene alguna estructura:
+
+```{r fit-arima}
+fitASML <- auto.arima(rASML, trace = TRUE, test = "kpss", ic="bic")
+fitBAYN <- auto.arima(rBAYN, trace = TRUE, test = "kpss", ic="bic")
+fitBNP <- auto.arima(rBNP, trace = TRUE, test = "kpss", ic="bic")
+
+
+```
+
+Como podemos verificar, todos los activos no poseen estructura ARIMA.
+El siguiente punto será verificar si existe el efecto de ARCH en los rendimientos. Para ello utilizaremos los residuos al cuadrado de de los modelos fit. 
+
+Vemamos el contraste de Ljung-Box:
+
+
+```{r ljung-box}
+Box.test(fitASML$residuals^2, lag=12, type = "Ljung-Box")
+Box.test(fitBAYN$residuals^2, lag=12, type = "Ljung-Box")
+Box.test(fitBNP$residuals^2, lag=12, type = "Ljung-Box")
+```
+
+Recordemos que el contraste de Ljung-Box enfrenta la hipótesis nula de que no hay efectos arch frente a la alternativa de que existen efectos arch. Dado que los p-valores son inferiores al 5% rechazamos la hipótesis nula de la no existencia del efecto arch, por lo que podemos inturir que nos enferntamos a los efectos del arch.
+
+Vamos a especificar el modelo GARCH(1,1) con el modelo de la media (0,0), ya que son los resultados que obtuvimos en el ajuste de ARIMA.
+
+Veamos la especificación:
+
+```{r garch11.spec}
+garch11.spec <- ugarchspec(variance.model = list(garchOrder=c(1,1)),
+                           mean.model = list(armaOrder=c(0,0)))
+
+```
+
+Especifiquemos los modelos arch de orden <=5 para cada activo:
+
+```{r arch.ASML}
+arch.order <- 1:5
+arch.names <- paste("arch", arch.order, sep=".")
+arch.listASML <- list()
+arch.listBAYN <- list()
+arch.listBNP <- list()
+for(p in arch.order) {
+  arch.spec <- ugarchspec(variance.model = list(garchOrder=c(p,0)), 
+                         mean.model = list(armaOrder=c(0,0)))
+  arch.fitASML <- ugarchfit(spec=arch.spec, data=rASML,
+                       solver.control=list(trace = 0))
+  arch.listASML[[p]] <- arch.fitASML
+  
+  arch.fitBAYN <- ugarchfit(spec=arch.spec, data=rBAYN,
+                       solver.control=list(trace = 0))
+  arch.listBAYN[[p]] <- arch.fitBAYN
+    
+  arch.fitBNP <- ugarchfit(spec=arch.spec, data=rBNP,
+                       solver.control=list(trace = 0))
+  arch.listBNP[[p]] <- arch.fitBNP
+}
+names(arch.listASML) <- arch.names
+
+info.matASML <- sapply(arch.listASML, infocriteria)
+rownames(info.matASML) <- rownames(infocriteria(arch.listASML[[1]]))
+info.matASML
+
+names(arch.listBAYN) <- arch.names
+
+info.matBAYN <- sapply(arch.listBAYN, infocriteria)
+rownames(info.matBAYN) <- rownames(infocriteria(arch.listBAYN[[1]]))
+info.matBAYN
+
+names(arch.listBNP) <- arch.names
+
+info.matBNP <- sapply(arch.listBNP, infocriteria)
+rownames(info.matBNP) <- rownames(infocriteria(arch.listBNP[[1]]))
+info.matBNP 
+
+
+```
+Los criterios de información para:
+ * ASML: mejoran al aumentar el orden del ARCH
+ * BAYN: señalan como el mejor modelo el ARCH(3)
+ * BNP: mejoran al aumentar el orden del ARCH
+
+Ahora vamos a probar a ejecutar el modelo para cada activo:
+
+## ASML
+
+Vamos a comparar los resultados de GARCH(1,1) con ARCH(5)
+
+```{r}
+garch11.fitASML <- ugarchfit(spec = garch11.spec, data=rASML)
+garch11.fitASML
+
+```
+
+ vamos a probar la las estimación rolling en la que utilizaremos una ventana de 120 días con ajuste diario.
+ 
+ 
+```{r}
+cl = makePSOCKcluster(10)
+rollASML = ugarchroll(garch11.spec, rASML, n.start = 120, refit.every = 1,
+refit.window = "moving", solver = "hybrid", calculate.VaR = TRUE,
+VaR.alpha = c(0.01, 0.05), cluster = cl, keep.coef = TRUE)
+
+```
+
+Veamos los resultados al 1%:
+
+```{r}
+report(rollASML, type="VaR", VaR.alpha = 0.01, conf.level= 0.99)
+```
+
+Veamos los resultados al 5%:
+```{r}
+report(rollASML, type="VaR", VaR.alpha = 0.05, conf.level= 0.95)
+```
+
+Veamos algunos gráficos:
+
+```{r}
+
+plot(garch11.fitASML, which=9)
+plot(garch11.fitASML, which=10)
+plot(garch11.fitASML, which=11)
+plot(garch11.fitASML, which=12)
+```
+
+Comparación entre GARCH(1,1) y ARCH(5):
+
+```{r}
+par(mfrow=c(2,1))
+plot.ts(sigma(garch11.fitASML), main="GARCH(1,1) conditional vol",
+        ylab="vol", col="blue")
+plot.ts(sigma(arch.listASML$arch.5), main="ARCH(5) conditional vol",
+        ylab="vol", col="blue")
+par(mfrow=c(1,1))
+```
+
+
+En este caso podríamos elegir el GARCH(1,1) ya que sus criterios de información son mejores. Además, tiene menor número de parámetros lo que hace que el modelo sea más fiable a la hora de la explicación de los parámetros
+
+## BAYN
+
+```{r}
+garch11.fitBAYN <- ugarchfit(spec = garch11.spec, data=rBAYN)
+garch11.fitBAYN
+
+```
+
+vamos a probar la las estimación rolling en la que utilizaremos una ventana de 120 días con ajuste diario.
+ 
+ 
+```{r}
+cl = makePSOCKcluster(10)
+rollBAYN = ugarchroll(garch11.spec, rBAYN, n.start = 120, refit.every = 1,
+refit.window = "moving", solver = "hybrid", calculate.VaR = TRUE,
+VaR.alpha = c(0.01, 0.05), cluster = cl, keep.coef = TRUE)
+
+```
+
+Veamos los resultados al 1%:
+
+```{r}
+report(rollBAYN, type="VaR", VaR.alpha = 0.01, conf.level= 0.99)
+```
+
+Veamos los resultados al 5%:
+```{r}
+report(rollBAYN, type="VaR", VaR.alpha = 0.05, conf.level= 0.95)
+```
+
+Veamos algunos gráficos:
+
+```{r}
+
+plot(garch11.fitASML, which=9)
+plot(garch11.fitASML, which=10)
+plot(garch11.fitASML, which=11)
+plot(garch11.fitASML, which=12)
+
+```
+
+
+Comparación entre GARCH(1,1) y ARCH(3):
+
+```{r}
+par(mfrow=c(2,1))
+plot.ts(sigma(garch11.fitBAYN), main="GARCH(1,1) conditional vol",
+        ylab="vol", col="blue")
+plot.ts(sigma(arch.listBAYN$arch.3), main="ARCH(3) conditional vol",
+        ylab="vol", col="blue")
+par(mfrow=c(1,1))
+
+```
+
+En este caso al igual que en el anterior los criterios de información señalan el modelo GARCH(1,1) como mejor.
+
+## BNP
+
+```{r}
+garch11.fitBNP <- ugarchfit(spec = garch11.spec, data=rBNP)
+garch11.fitBNP
+
+```
+
+
+vamos a probar la las estimación rolling en la que utilizaremos una ventana de 120 días con ajuste diario.
+ 
+ 
+```{r}
+cl = makePSOCKcluster(10)
+rollBNP = ugarchroll(garch11.spec, rBNP, n.start = 120, refit.every = 1,
+refit.window = "moving", solver = "hybrid", calculate.VaR = TRUE,
+VaR.alpha = c(0.01, 0.05), cluster = cl, keep.coef = TRUE)
+
+```
+
+Veamos los resultados al 1%:
+
+```{r}
+report(rollBNP, type="VaR", VaR.alpha = 0.01, conf.level= 0.99)
+```
+
+Veamos los resultados al 5%:
+```{r}
+report(rollBNP, type="VaR", VaR.alpha = 0.05, conf.level= 0.95)
+```
+
+Veamos algunos gráficos:
+
+```{r}
+
+plot(garch11.fitASML, which=9)
+plot(garch11.fitASML, which=10)
+plot(garch11.fitASML, which=11)
+plot(garch11.fitASML, which=12)
+```
+
+Vamos a comparar ARCH(5) con GARCH(1,1)
+
+```{r}
+par(mfrow=c(2,1))
+plot.ts(sigma(garch11.fitBNP), main="GARCH(1,1) conditional vol",
+        ylab="vol", col="blue")
+plot.ts(sigma(arch.listBNP$arch.5), main="ARCH(5) conditional vol",
+        ylab="vol", col="blue")
+par(mfrow=c(1,1))
+
+```
+
+En este caso, al igual que en los anteriores, el modelo GARCH(1,1) tiene mejores criterios de información, pero hay que fijarse que la volatilidad condicional se parece bastante entre los dos modeos. 
+
+
+
+
+# Apartado 2: Ajuste de los modelos CAPM para los activos
+
+En este apartado vamos a ajustar tres modelos distintos de CAPM para cada activos. Son los siguientes modelos:
+
+  1. $(r - R_F) = \beta (R_M - R_F) + \varepsilon $
+  
+  2. $(r - R_F) = \alpha \beta (R_M - R_F) + \varepsilon  $
+  
+  3. $r = \alpha + \beta R_F + \varepsilon$
+  
+Vamos a calcular los tipos reales de las rentabilidades y de mercado:
+
+```{r}
+EX.ASML <- rASML-DTB3
+EX.BAYN <- rBAYN-DTB3
+EX.BNP <- rBNP-DTB3
+EX.MKT <- rESX-DTB3
+
+```
+
+
+## Modelos CAPM para ASML
+
+Vamos a proceder el cálculo de los moodelos para ASML.
+
+
+### Modelo 1
+
+```{r m1.ASML}
+m1.ASML <- lm(EX.ASML ~  EX.MKT - 1)
+sm1.ASML <- summary(m1.ASML)
+print(sm1.ASML)
+print(m1.ASML$coefficients)
+m1.ASML.coef <- m1.ASML$coefficients
+beta1.ASML <- m1.ASML.coef
+
+cat("Beta ", beta1.ASML, "\n")
+
+```
+
+Comprobamos los resíduos del modelo:
+  
+```{r}
+uhat1.ASML <- m1.ASML$residuals
+uhat1.ASML <- as.xts(uhat1.ASML)
+ggAcf(uhat1.ASML) + labs(title="Residuos CAPM1")
+uhat21.ASML <- uhat1.ASML^2
+ggAcf(uhat21.ASML) + labs(title="Residuos al cuadrado de CAPM1")
+Box.test(uhat21.ASML, lag=12, type="Ljung-Box")
+ArchTest(uhat1.ASML)
+
+```
+
+
+### Modelo 2
+
+
+```{r m2.ASML}
+m2.ASML <- lm(EX.ASML ~  EX.MKT)
+sm2.ASML <- summary(m2.ASML)
+print(sm2.ASML)
+print(m2.ASML$coefficients)
+m2.ASML.coef <- m2.ASML$coefficients
+alpha2.ASML <- m2.ASML.coef[1]
+beta2.ASML <- m2.ASML.coef[2]
+cat("Alpha ", alpha2.ASML, "\n")
+cat("Beta ", beta2.ASML, "\n")
+```
+
+
+
+Comprobamos los resíduos del modelo:
+
+```{r}
+uhat2.ASML <- m2.ASML$residuals
+uhat2.ASML <- as.xts(uhat2.ASML)
+ggAcf(uhat2.ASML) + labs(title="Residuos CAPM2")
+uhat22.ASML <- uhat2.ASML^2
+ggAcf(uhat22.ASML) + labs(title="Residuos al cuadrado de CAPM2")
+Box.test(uhat22.ASML, lag=12, type="Ljung-Box")
+ArchTest(uhat2.ASML)
+
+```
+
+### Modelo 3
+
+
+```{r m3.ASML}
+m3.ASML <- lm(rASML ~ rESX)
+sm3.ASML<- summary(m3.ASML)
+print(sm3.ASML)
+m3.ASML.coef <- m3.ASML$coefficients
+alpha3.ASML <- m3.ASML.coef[1]
+beta3.ASML <- m3.ASML.coef[2]
+cat("Alpha ",alpha3.ASML, "\n")
+cat("Beta ", beta3.ASML, "\n")
+```
+
+Comprobamos los resíduos del modelo:
+  
+  
+```{r}
+uhat3.ASML <- m3.ASML$residuals
+uhat3.ASML <- as.xts(uhat3.ASML)
+ggAcf(uhat3.ASML) + labs(title="Residuos de  CAPM3")
+uhat23.ASML <- uhat3.ASML^2
+ggAcf(uhat23.ASML) + labs(title="Residuos al cuadrado de CAPM3")
+Box.test(uhat23.ASML, lag=12, type="Ljung-Box")
+ArchTest(uhat3.ASML)
+
+```
+
+
+Veamos los criterios de información para ASML
+
+```{r, warning= FALSE, error=FALSE, message=FALSE}
+AIC.ASML <- AIC(m1.ASML,m2.ASML,m3.ASML)
+BIC.ASML <- BIC(m1.ASML,m2.ASML,m3.ASML)
+
+info.capm.ASML <- cbind(AIC.ASML,BIC.ASML)
+info.capm.ASML <- info.capm.ASML[,-c(1,3)]
+rownames(info.capm.ASML) <- c("CAPM1", "CAPM2", "CAPM3")
+colnames(info.capm.ASML) <- c("Akaike", "Schwarz")
+info.capm.ASML
+```
+
+
+Dados los criterios de información y que el parámetro alpha es significativo se puede seleccionar el modelo CAPM3
+
+
+## Modelos CAPM para BAYN
+
+Vamos a proceder el cálculo de los moodelos para BAYN.
+
+
+### Modelo 1
+
+```{r m1.BAYN}
+m1.BAYN <- lm(EX.BAYN ~  EX.MKT - 1)
+sm1.BAYN <- summary(m1.BAYN)
+print(sm1.BAYN)
+print(m1.BAYN$coefficients)
+m1.BAYN.coef <- m1.BAYN$coefficients
+beta1.BAYN <- m1.BAYN.coef
+
+cat("Beta ", beta1.BAYN, "\n")
+
+```
+
+Comprobamos los resíduos del modelo:
+  
+```{r}
+uhat1.BAYN <- m1.BAYN$residuals
+uhat1.BAYN <- as.xts(uhat1.BAYN)
+ggAcf(uhat1.BAYN) + labs(title="Residuos CAPM1")
+uhat21.BAYN <- uhat1.BAYN^2
+ggAcf(uhat21.BAYN) + labs(title="Residuos al cuadrado de CAPM1")
+Box.test(uhat21.BAYN, lag=12, type="Ljung-Box")
+ArchTest(uhat1.BAYN)
+
+```
+
+
+### Modelo 2
+
+
+```{r m2.BAYN}
+m2.BAYN <- lm(EX.BAYN ~  EX.MKT)
+sm2.BAYN <- summary(m2.BAYN)
+print(sm2.BAYN)
+print(m2.BAYN$coefficients)
+m2.BAYN.coef <- m2.BAYN$coefficients
+alpha2.BAYN <- m2.BAYN.coef[1]
+beta2.BAYN <- m2.BAYN.coef[2]
+cat("Alpha ", alpha2.BAYN, "\n")
+cat("Beta ", beta2.BAYN, "\n")
+```
+
+
+
+Comprobamos los resíduos del modelo:
+
+```{r}
+uhat2.BAYN <- m2.BAYN$residuals
+uhat2.BAYN <- as.xts(uhat2.BAYN)
+ggAcf(uhat2.BAYN) + labs(title="Residuos CAPM2")
+uhat22.BAYN <- uhat2.BAYN^2
+ggAcf(uhat22.BAYN) + labs(title="Residuos al cuadrado de CAPM2")
+Box.test(uhat22.BAYN, lag=12, type="Ljung-Box")
+ArchTest(uhat2.BAYN)
+
+```
+
+### Modelo 3
+
+
+```{r m3.BAYN}
+m3.BAYN <- lm(rBAYN ~ rESX)
+sm3.BAYN<- summary(m3.BAYN)
+print(sm3.BAYN)
+m3.BAYN.coef <- m3.BAYN$coefficients
+alpha3.BAYN <- m3.BAYN.coef[1]
+beta3.BAYN <- m3.BAYN.coef[2]
+cat("Alpha ",alpha3.BAYN, "\n")
+cat("Beta ", beta3.BAYN, "\n")
+```
+
+Comprobamos los resíduos del modelo:
+  
+  
+```{r}
+uhat3.BAYN <- m3.BAYN$residuals
+uhat3.BAYN <- as.xts(uhat3.BAYN)
+ggAcf(uhat3.BAYN) + labs(title="Residuos de  CAPM3")
+uhat23.BAYN <- uhat3.BAYN^2
+ggAcf(uhat23.BAYN) + labs(title="Residuos al cuadrado de CAPM3")
+Box.test(uhat23.BAYN, lag=12, type="Ljung-Box")
+ArchTest(uhat3.BAYN)
+
+```
+
+
+Veamos los criterios de información para BAYN
+
+```{r, warning= FALSE, error=FALSE, message=FALSE}
+AIC.BAYN <- AIC(m1.BAYN,m2.BAYN,m3.BAYN)
+BIC.BAYN <- BIC(m1.BAYN,m2.BAYN,m3.BAYN)
+
+info.capm.BAYN <- cbind(AIC.BAYN,BIC.BAYN)
+info.capm.BAYN <- info.capm.BAYN[,-c(1,3)]
+rownames(info.capm.BAYN) <- c("CAPM1", "CAPM2", "CAPM3")
+colnames(info.capm.BAYN) <- c("Akaike", "Schwarz")
+info.capm.BAYN
+```
+
+En este caso el parámetro alpha también es significativo, y nos ijaremos el el parmámetro de Akaike y, por tanto, podemos seleccionar el modelo CAMP2.
+
+
+
+## Modelos CAPM para BNP
+
+Vamos a proceder el cálculo de los moodelos para BNP.
+
+
+### Modelo 1
+
+```{r m1.BNP}
+m1.BNP <- lm(EX.BNP ~  EX.MKT - 1)
+sm1.BNP <- summary(m1.BNP)
+print(sm1.BNP)
+print(m1.BNP$coefficients)
+m1.BNP.coef <- m1.BNP$coefficients
+beta1.BNP <- m1.BNP.coef
+
+cat("Beta ", beta1.BNP, "\n")
+
+```
+
+Comprobamos los resíduos del modelo:
+  
+```{r}
+uhat1.BNP <- m1.BNP$residuals
+uhat1.BNP <- as.xts(uhat1.BNP)
+ggAcf(uhat1.BNP) + labs(title="Residuos CAPM1")
+uhat21.BNP <- uhat1.BNP^2
+ggAcf(uhat21.BNP) + labs(title="Residuos al cuadrado de CAPM1")
+Box.test(uhat21.BNP, lag=12, type="Ljung-Box")
+ArchTest(uhat1.BNP)
+
+```
+
+
+### Modelo 2
+
+
+```{r m2.BNP}
+m2.BNP <- lm(EX.BNP ~  EX.MKT)
+sm2.BNP <- summary(m2.BNP)
+print(sm2.BNP)
+print(m2.BNP$coefficients)
+m2.BNP.coef <- m2.BNP$coefficients
+alpha2.BNP <- m2.BNP.coef[1]
+beta2.BNP <- m2.BNP.coef[2]
+cat("Alpha ", alpha2.BNP, "\n")
+cat("Beta ", beta2.BNP, "\n")
+```
+
+
+
+Comprobamos los resíduos del modelo:
+
+```{r}
+uhat2.BNP <- m2.BNP$residuals
+uhat2.BNP <- as.xts(uhat2.BNP)
+ggAcf(uhat2.BNP) + labs(title="Residuos CAPM2")
+uhat22.BNP <- uhat2.BNP^2
+ggAcf(uhat22.BNP) + labs(title="Residuos al cuadrado de CAPM2")
+Box.test(uhat22.BNP, lag=12, type="Ljung-Box")
+ArchTest(uhat2.BNP)
+
+```
+
+### Modelo 3
+
+
+```{r m3.BNP}
+m3.BNP <- lm(rBNP ~ rESX)
+sm3.BNP<- summary(m3.BNP)
+print(sm3.BNP)
+m3.BNP.coef <- m3.BNP$coefficients
+alpha3.BNP <- m3.BNP.coef[1]
+beta3.BNP <- m3.BNP.coef[2]
+cat("Alpha ",alpha3.BNP, "\n")
+cat("Beta ", beta3.BNP, "\n")
+```
+
+Comprobamos los resíduos del modelo:
+  
+  
+```{r}
+uhat3.BNP <- m3.BNP$residuals
+uhat3.BNP <- as.xts(uhat3.BNP)
+ggAcf(uhat3.BNP) + labs(title="Residuos de  CAPM3")
+uhat23.BNP <- uhat3.BNP^2
+ggAcf(uhat23.BNP) + labs(title="Residuos al cuadrado de CAPM3")
+Box.test(uhat23.BNP, lag=12, type="Ljung-Box")
+ArchTest(uhat3.BNP)
+
+```
+
+
+Veamos los criterios de información para BNP
+
+```{r, warning= FALSE, error=FALSE, message=FALSE}
+AIC.BNP <- AIC(m1.BNP,m2.BNP,m3.BNP)
+BIC.BNP <- BIC(m1.BNP,m2.BNP,m3.BNP)
+
+info.capm.BNP <- cbind(AIC.BNP,BIC.BNP)
+info.capm.BNP <- info.capm.BNP[,-c(1,3)]
+rownames(info.capm.BNP) <- c("CAPM1", "CAPM2", "CAPM3")
+colnames(info.capm.BNP) <- c("Akaike", "Schwarz")
+info.capm.BNP
+```
+
+En este caso el parámetro de aplha no es significativo y los crtiterios de información señalan el modelo CAPM1 por lo que seleccionamos ese modelo.
+
+
+## Índices 
+
+En este apartado vamos a calcular tres índices: Sharpe, Treynor y Jensen, con el objetivo de ordenar los activos según su comportamiento.
+
+
+### índice de Sharpe
+
+El Ratio de Sharpe se define como:
+
+$$ Sharpe~Ratio = \frac{R_{Act}-R_{sin~riesgo}}{\sigma_{Act}}$$
+
+
+Para simplificar suponemos que $R_{sin~riesgo}=0$.
+
+```{r}
+sharpe.ratio.ASML <- SharpeRatio(EX.ASML, FUN = "StdDev")
+sharpe.ratio.BAYN <- SharpeRatio(EX.BAYN, FUN = "StdDev")
+sharpe.ratio.BNP <- SharpeRatio(EX.BNP, FUN = "StdDev")
+sharpe.ratio.ASML
+sharpe.ratio.BAYN
+sharpe.ratio.BNP
+```
+
+
+
+
+### índice de Treynor
+
+
+El Ratio de Treynor se define como:
+
+$$ Treynor~Ratio = \frac{R_{Act}-R_{sin~riesgo}}{\beta_{Act}}$$.
+
+Para simplificar suponemos que $R_{sin~riesgo}=0$
+
+
+
+
+```{r}
+treynor.ratio.ASML <- mean(EX.ASML)/ m2.ASML$coeff[2]
+treynor.ratio.BAYN <- mean(EX.BAYN)/ m2.BAYN$coeff[2]
+treynor.ratio.BNP <- mean(EX.BNP)/ m2.BNP$coeff[2]
+
+treynor<- cbind(treynor.ratio.ASML,treynor.ratio.BAYN,treynor.ratio.BNP)
+colnames(treynor) <- c("ASML", "BAYN", "BNP")
+rownames(treynor) <- c("Treynor Ratio")
+treynor
+```
+
+
+### índice de Jensen
+
+
+
+El alpha de Jensen se define como:
+
+$$ Alpha~de~Jensen = \alpha=(R_{Act}-R_{sin~riesgo})-(R_{Act}-R_{sin~riesgo})\beta_{Act}$$
+E alpha de Jensen equivale al valor de alpha que estimamos en nuestros modelos CAPM.
+
+```{r}
+jensen.ratio.ASML <- alpha2.ASML
+jensen.ratio.BAYN <- alpha2.BAYN
+jensen.ratio.BNP <- alpha2.BNP
+
+jensen <- cbind(jensen.ratio.ASML, jensen.ratio.BAYN,jensen.ratio.BNP)
+colnames(jensen) <- c("ASML", "BAYN", "BNP")
+rownames(jensen) <- c("Alpha")
+jensen
+```
+
+## Comportamiento de los activos
+
+*Los activos con $\beta < 1$ se consideran defensivos, ya que tienen menor variabilidad que la del mercado. 
+*Los fondos con $\beta  = 1$ se consideran neutros, ya que sus rendimientos se comportan como el mercado.
+*Los fondos con $\beta > 1$ se consideran agresivos, ya que tienen mayor variabilidad que la del mercado. 
+*Los fondos con $\beta  = 1$ se consideran neutros, ya que sus rendimientos se comportan como el mercado.
+
+veamos la tabla con las betas de los activos para ver su comportamiento de acuerdo al mercado:
+
+```{r}
+beta.activos <- cbind(beta1.ASML, beta1.BAYN, beta1.BNP)
+colnames(beta.activos) <- c("ASML", "BAYN", "BNP")
+rownames(beta.activos) <- c("Beta")
+beta.activos
+
+```
+
+Viendo como son los parámetros $\beta$ ASML es el más defesivo seguido de BAYN que también lo es, pero en menor medida. El activo BNP es el que se comprta de forma agresiva. 
+
+
+
+# Apartado 3: los parámetros de los CAPM y los índices son constantes en el tiempo?
+
+En este apartado vamos a probar si los distintos parámetros elegidos son constantes o no en el tiempo.
+
+Para conseguirlo vamos a probar dos maneras de demostrarlo:
+ 1. Recursive. Vasmos a calcular la correlación recursiva de los parámetros fuiando como el comienzo en 100
+ 2.Rolling. Vamos a cambiar del punto de vista fijando pantallas de 100 observaciones y moviendola día a día.
+ 
+ Este método lo aplicarmos a los CAPM2 para ver el comportamiento de los dos parámetros: alpha y beta, con el fin de tener una muestra homogénea.
+ 
+
+
+## ASML
+
+Recursive:
+
+```{r constancycor.ASML}
+ASML.matrix <- cbind(EX.ASML, EX.MKT)
+ASML.matrix <- coredata(ASML.matrix)
+
+ASML.X <- ASML.matrix[,2]
+ASML.Y <- ASML.matrix[,1]
+
+
+k0 <- 99
+T <- length(ASML.X)
+alpha.ASML <- beta.ASML <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  vX.ASML <- ASML.X[1:k]
+  vY.ASML <- ASML.Y[1:k]
+  m2.ASML <- lm(vY.ASML ~ vX.ASML)
+  alpha.ASML[i] <-m2.ASML$coeff[1]
+  beta.ASML[i] <- m2.ASML$coeff[2]
+}
+
+alpha.ASML <- xts(alpha.ASML, index(EX.ASML)[(k0+1):(T)])
+beta.ASML <- xts(beta.ASML, index(EX.ASML)[(k0+1):(T)])
+dygraph(alpha.ASML, main = "Recursive Alpha: ASML") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+dygraph(beta.ASML, main = "Recursive Beta: ASML") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+Rolling:
+
+
+```{r conscor2.ASML}
+N <- 100
+alpha.ASML <- beta.ASML <- array(dim=(T-N+1))
+for(i in 1:(T-N+1))
+{
+  vX.ASML <- ASML.X[i:(i+N)]
+  vY.ASML <- ASML.Y[i:(i+N)]
+  m2.ASML <- lm(vY.ASML ~ vX.ASML)
+  alpha.ASML[i] <-m2.ASML$coeff[1]
+  beta.ASML[i] <- m2.ASML$coeff[2] 
+}
+
+alpha.ASML <- xts(alpha.ASML, index(EX.ASML)[(k0+1):(T)])
+beta.ASML <- xts(beta.ASML, index(EX.ASML)[(k0+1):(T)])
+dygraph(alpha.ASML, main = "Rolling Alpha: ASML") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+dygraph(beta.ASML, main = "Rolling Beta: ASML") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+
+
+## BAYN
+
+Recursive:
+```{r constancycor.BAYN}
+BAYN.matrix <- cbind(EX.BAYN, EX.MKT)
+BAYN.matrix <- coredata(BAYN.matrix)
+
+BAYN.X <- BAYN.matrix[,2]
+BAYN.Y <- BAYN.matrix[,1]
+
+
+k0 <- 99
+T <- length(BAYN.X)
+alpha.BAYN <- beta.BAYN <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  vX.BAYN <- BAYN.X[1:k]
+  vY.BAYN <- BAYN.Y[1:k]
+  m2.BAYN <- lm(vY.BAYN ~ vX.BAYN)
+  alpha.BAYN[i] <-m2.BAYN$coeff[1]
+  beta.BAYN[i] <- m2.BAYN$coeff[2]
+}
+
+alpha.BAYN <- xts(alpha.BAYN, index(EX.BAYN)[(k0+1):(T)])
+beta.BAYN <- xts(beta.BAYN, index(EX.BAYN)[(k0+1):(T)])
+dygraph(alpha.BAYN, main = "Recursive Alpha: BAYN") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+dygraph(beta.BAYN, main = "Recursive Beta: BAYN") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+
+Rolling:
+
+```{r conscor2.BAYN}
+N <- 100
+alpha.BAYN <- beta.BAYN <- array(dim=(T-N+1))
+for(i in 1:(T-N+1))
+{
+  vX.BAYN <- BAYN.X[i:(i+N)]
+  vY.BAYN <- BAYN.Y[i:(i+N)]
+  m2.BAYN <- lm(vY.BAYN ~ vX.BAYN)
+  alpha.BAYN[i] <-m2.BAYN$coeff[1]
+  beta.BAYN[i] <- m2.BAYN$coeff[2] 
+}
+
+alpha.BAYN <- xts(alpha.BAYN, index(EX.BAYN)[(k0+1):(T)])
+beta.BAYN <- xts(beta.BAYN, index(EX.BAYN)[(k0+1):(T)])
+dygraph(alpha.BAYN, main = "Rolling Alpha: BAYN") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+dygraph(beta.BAYN, main = "Rolling Beta: BAYN") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+
+## BNP
+
+Recursive:
+
+```{r constancycor.BNP}
+BNP.matrix <- cbind(EX.BNP, EX.MKT)
+BNP.matrix <- coredata(BNP.matrix)
+
+BNP.X <- BNP.matrix[,2]
+BNP.Y <- BNP.matrix[,1]
+
+
+k0 <- 99
+T <- length(BNP.X)
+alpha.BNP <- beta.BNP <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  vX.BNP <- BNP.X[1:k]
+  vY.BNP <- BNP.Y[1:k]
+  m2.BNP <- lm(vY.BNP ~ vX.BNP)
+  alpha.BNP[i] <-m2.BNP$coeff[1]
+  beta.BNP[i] <- m2.BNP$coeff[2]
+}
+
+alpha.BNP <- xts(alpha.BNP, index(EX.BNP)[(k0+1):(T)])
+beta.BNP <- xts(beta.BNP, index(EX.BNP)[(k0+1):(T)])
+dygraph(alpha.BNP, main = "Recursive Alpha: BNP") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+dygraph(beta.BNP, main = "Recursive Beta: BNP") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+
+Rolling:
+
+```{r conscor2.BNP}
+N <- 100
+alpha.BNP <- beta.BNP <- array(dim=(T-N+1))
+for(i in 1:(T-N+1))
+{
+  vX.BNP <- BNP.X[i:(i+N)]
+  vY.BNP <- BNP.Y[i:(i+N)]
+  m2.BNP <- lm(vY.BNP ~ vX.BNP)
+  alpha.BNP[i] <-m2.BNP$coeff[1]
+  beta.BNP[i] <- m2.BNP$coeff[2] 
+}
+
+alpha.BNP <- xts(alpha.BNP, index(EX.BNP)[(k0+1):(T)])
+beta.BNP <- xts(beta.BNP, index(EX.BNP)[(k0+1):(T)])
+dygraph(alpha.BNP, main = "Rolling Alpha: BNP") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+dygraph(beta.BNP, main = "Rolling Beta: BNP") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+
+## Índice Sharpe
+
+En el caso de comprobar la constancia o no del índce de Sharpe, vamos a proceder a calcular de forma recursiva el parámetro de forma que se obtendrán distindos índices para cada periodo, comenzando en la observación 100.
+
+De la misma forma se comprobará con Rolling
+
+Recursive Sharpe-ASML:
+
+```{r constancycor.ASML.sh}
+ASML.sh <- EX.ASML
+
+k0 <- 99
+T <- length(ASML.sh)
+sharpe.ASML <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  v.ASML.sh <- ASML.sh[1:k]
+
+  sharpe.ASML[i] <- SharpeRatio(v.ASML.sh, FUN = "StdDev")
+}
+
+sharpe.ASML <- xts(sharpe.ASML, index(EX.ASML)[(k0+1):(T)])
+dygraph(sharpe.ASML, main = "Recursive Sharpe Ratio: ASML") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+Rolling Sharpe-ASML:
+
+```{r conscor2.ASML.sh}
+
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  v.ASML.sh <- ASML.sh[i:k]
+
+  sharpe.ASML[i] <- SharpeRatio(v.ASML.sh, FUN = "StdDev")
+}
+
+
+sharpe.ASML <- xts(sharpe.ASML, index(EX.ASML)[(k0+1):(T)])
+dygraph(sharpe.ASML, main = "Rolling Sharpe ratio: ASML") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+Recursive Sharpe-BAYN:
+
+```{r constancycor.BAYN.sh}
+BAYN.sh <- EX.BAYN
+
+k0 <- 99
+T <- length(BAYN.sh)
+sharpe.BAYN <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  v.BAYN.sh <- BAYN.sh[1:k]
+
+  sharpe.BAYN[i] <- SharpeRatio(v.BAYN.sh, FUN = "StdDev")
+}
+
+sharpe.BAYN <- xts(sharpe.BAYN, index(EX.BAYN)[(k0+1):(T)])
+dygraph(sharpe.BAYN, main = "Recursive Sharpe ratio: BAYN") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+Rolling Sharpe-BAYN:
+
+```{r conscor2.BAYN.sh}
+
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  v.BAYN.sh <- BAYN.sh[i:k]
+
+  sharpe.BAYN[i] <- SharpeRatio(v.BAYN.sh, FUN = "StdDev")
+}
+
+
+sharpe.BAYN <- xts(sharpe.ASML, index(EX.BAYN)[(k0+1):(T)])
+dygraph(sharpe.BAYN, main = "Rolling Sharpe ratio: BAYN") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+Recursive Sharpe-BNP:
+
+```{r constancycor.BNP.sh}
+BNP.sh <- EX.BNP
+
+k0 <- 99
+T <- length(BNP.sh)
+sharpe.BNP <- array(dim=(T-k0))
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  v.BNP.sh <- BNP.sh[1:k]
+
+  sharpe.BNP[i] <- SharpeRatio(v.BNP.sh, FUN = "StdDev")
+}
+
+sharpe.BNP <- xts(sharpe.BNP, index(EX.BNP)[(k0+1):(T)])
+dygraph(sharpe.BNP, main = "Recursive Sharpe ratio: BNP") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+
+
+Rolling Sharpe-BNP:
+
+```{r conscor2.BNP.sh}
+
+for(i in 1:(T-k0))
+{
+  k <- k0 + i
+  v.BNP.sh <- BNP.sh[i:k]
+  
+  sharpe.BNP[i] <- SharpeRatio(v.BNP.sh, FUN = "StdDev")
+}
+
+
+sharpe.BNP <- xts(sharpe.BNP, index(EX.BNP)[(k0+1):(T)])
+dygraph(sharpe.BNP, main = "Rolling Sharpe ratio: BNP") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+
+
+## Índice de Treynor
+
+Dada la construcción del índice sabemos que se utiliza el parámetro beta para su cálculo y, por tanto, podemos aplicar la beta calculada para el procedimiento Rolling y demostrar que no es constante. Por el otro lado la rentabilidad también varía dependiendo del periodo estudado y dado que la beta ni la rentabilidad son constantes, la ratio de Treynor tampoco lo será.
+
+Veamos el enfoque de utilizar la rentabilidad media y la beta de Rolling:
+
+
+### Índice de Treynor-ASML
+
+```{r trey.ASML}
+trey.ASML <-mean(rASML)/beta.ASML
+
+dygraph(trey.ASML, main = "Treynor Ratio con Recursive beta de ASML") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+### Índice de Treynor- BAYN
+
+```{r trey.BAYN}
+trey.BAYN <-mean(rBAYN)/beta.BAYN
+
+dygraph(trey.BAYN, main = "Treynor Ratio con Recursive beta de BAYN") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+### Índice de Treynor- BNP
+
+```{r trey.BNP}
+trey.BNP <-mean(rBNP)/beta.BNP
+
+dygraph(trey.BNP, main = "Treynor Ratio con Recursive beta de BNP") %>% dyRangeSelector(dateWindow = c("2008-01-01", "2017-04-01"))
+```
+
+
+## Alpha de Jensen
+
+Se trata de alpha representado en de los modelos CAPM de los activos por tanto se demuestra también que dicho parámetro no es constante a lo largo del tiempo.
+
+
+
+# Apartado 4: problemas de heteroscedasticidad condicional?
+
+En este apartado analizaremos que si los modelos elegidos en el apartado anterior presentan problemas de heteroscedasticidad condicional. 
+
+Hay que señalar que todos los modelos estimados contienen un análisis de los resíduos, veamos los casos para cada activo del modelo seleccionado
+
+
+## ASML
+
+
+```{r}
+ggAcf(uhat3.ASML) + labs(title="Residuos de  CAPM3")
+ggAcf(uhat23.ASML) + labs(title="Residuos al cuadrado de CAPM3")
+Box.test(uhat23.ASML, lag=12, type="Ljung-Box")
+ArchTest(uhat3.ASML)
+```
+
+
+
+Dados los valores de los contrastes y contemplando los resíduos de este modelo observamos que no hay correlación entre los retardes de los errores y además el test de ARCH no indica esa estructura.
+
+## BAYN
+
+```{r}
+ggAcf(uhat2.BAYN) + labs(title="Residuos CAPM2")
+ggAcf(uhat22.BAYN) + labs(title="Residuos al cuadrado de CAPM2")
+uhat22.BAYN2 <- uhat22.BAYN*uhat22.BAYN
+Box.test(uhat22.BAYN2, lag=12, type="Ljung-Box")
+ArchTest(uhat2.BAYN)
+```
+
+
+En este caso observamos la no autocorrelación en los errores pero si los efectos ARCH. Dado que tenemos valores atípicos elevados es posible que tras ellos este algún tipo de estructura.
+
+Vamos a ajustar el ARIMA que contangan los resíduos:
+
+```{r}
+fit.uhat2.BAYN<- autoarfima(data =EX.BAYN, ar.max = 2, ma.max = 2, 
+criterion = "AIC", method = "full")
+
+fit.uhat2.BAYN
+```
+
+Se trata de un ARIMA(1,0,1) 
+
+
+Ajustemos el GARCH con EX.MKT como variable exógena creando el CAPM:
+
+```{r}
+garch11.BAYN.spec <- ugarchspec(variance.model = list(garchOrder=c(1,1),
+                                                      model= "apARCH"), 
+                             mean.model = list(armaOrder=c(1,1),
+                                               external.regressors=EX.MKT),
+                             distribution.model="jsu")
+EX.BAYN.garch11.fit <- ugarchfit(spec=garch11.BAYN.spec, data=EX.BAYN,
+                               solver.control=list(trace = 1))   
+
+EX.BAYN.garch11.fit
+```
+
+Veamos la comparación entre los parámetros obtenidos en el modelo CAPM y el GARCH(1,1):
+
+```{r}
+alpha.BAYN.GARCH <-as.data.frame(coef(EX.BAYN.garch11.fit)[6])
+beta.BAYN.GARCH <- as.data.frame(coef(EX.BAYN.garch11.fit)[7])
+garch.parmeters.BAYN <- cbind(alpha.BAYN.GARCH,beta.BAYN.GARCH, alpha2.BAYN,beta2.BAYN)
+colnames(garch.parmeters.BAYN)<- c("Alpha-GARCH", "Beta-GARCH", "Alpha-CAPM2", "Beta-CAPM2")
+rownames(garch.parmeters.BAYN)<- c("Parámetros")
+garch.parmeters.BAYN
+
+
+```
+Como podemos observar no hay campbio sistancial
+
+
+Veamos los errores del GARCH y su sigma.
+
+```{r}
+uhat.garch.BAYN <- residuals(EX.BAYN.garch11.fit)
+uhat.garch.BAYN2 <- uhat.garch.BAYN*uhat.garch.BAYN
+
+ArchTest(uhat.garch.BAYN)
+Box.test(uhat.garch.BAYN2,lag=12, type = "Ljung-Box")
+
+plot.ts(residuals(EX.BAYN.garch11.fit), ylab="e(t)", col="blue")
+abline(h=0)
+plot.ts(sigma(EX.BAYN.garch11.fit), ylab="sigma(t)", col="blue")
+
+
+```
+
+
+
+```{r}
+
+plot(EX.BAYN.garch11.fit, which=9)
+plot(EX.BAYN.garch11.fit, which=10)
+plot(EX.BAYN.garch11.fit, which=11)
+plot(EX.BAYN.garch11.fit, which=12)
+```
+La ACF parece ser una normal por lo que nosquedamos con ese modelo, aunque la ACF de los rsiduos presenta elevados valores atípicos. El primer LAG significativo no desaparece al ajustar los distintos ARIMA.
+
+### índices BAYN
+
+
+
+```{r garch.ratio.BAYN}
+sharpe.garch.BAYN <-  mean(EX.BAYN)/mean(sigma(EX.BAYN.garch11.fit))
+treynor.garch.BAYN <- mean(EX.BAYN)/as.data.frame(coef(EX.BAYN.garch11.fit)[6])
+jensen.garch.BAYN <- as.data.frame(coef(EX.BAYN.garch11.fit)[5])
+
+ind.capm.BAYN<- cbind(sharpe.ratio.BAYN,treynor.ratio.BAYN,jensen.ratio.BAYN)
+colnames(ind.capm.BAYN) <- c("Sharpe", "Treynor", "Jensen")
+ind.garch.BAYN<- cbind(sharpe.garch.BAYN,treynor.garch.BAYN,jensen.garch.BAYN)
+colnames(ind.garch.BAYN) <- c("Sharpe", "Treynor", "Jensen")
+compare.index.BAYN <- rbind(ind.capm.BAYN,ind.garch.BAYN)
+rownames(compare.index.BAYN)<- c("Ratios CAPM", "Ratios GARCH")
+compare.index.BAYN
+```
+
+Se observa diferencias significativas entre las distintas ratios.
+
+
+## BNP
+
+```{r}
+ggAcf(uhat2.BNP) + labs(title="Residuos CAPM2")
+ggAcf(uhat22.BNP) + labs(title="Residuos al cuadrado de CAPM2")
+uhat22.BNP2 <- uhat22.BNP*uhat22.BNP
+Box.test(uhat22.BNP2, lag=12, type="Ljung-Box")
+ArchTest(uhat2.BNP)
+```
+
+
+En este caso observamos la autocorrelación en los errores como los efectos ARCH.
+
+Vamos a ajustar el ARIMA que contangan los resíduos:
+  
+```{r}
+fit.uhat2.BNP<- autoarfima(data =EX.BNP, ar.max = 3, ma.max = 3, 
+                            criterion = "AIC", method = "full")
+
+fit.uhat2.BNP
+```
+
+Se trata de un ARIMA(1,0,1) 
+
+
+Ajustemos el GARCH con EX.MKT como variable exógena creando el CAPM:
+
+Nota: aunque el ajuste autoarfima marca un ARIMA(1,0,3), los parámetros no son significativos, tras reajustes se observa que el parámetro AR(1) es significativo.
+  
+```{r}
+garch11.BNP.spec <- ugarchspec(variance.model = list(garchOrder=c(1,1)), 
+                                mean.model = list(armaOrder=c(1,0),
+                                                  external.regressors=EX.MKT),
+                                distribution.model="sstd")
+EX.BNP.garch11.fit <- ugarchfit(spec=garch11.BNP.spec, data=EX.BNP,
+                                 solver.control=list(trace = 1))   
+
+EX.BNP.garch11.fit
+```
+
+Veamos la comparación entre los parámetros obtenidos en el modelo CAPM y el GARCH(1,1):
+  
+```{r}
+alpha.BNP.GARCH <-as.data.frame(coef(EX.BNP.garch11.fit)[5])
+beta.BNP.GARCH <- as.data.frame(coef(EX.BNP.garch11.fit)[6])
+garch.parmeters.BNP <- cbind(alpha.BNP.GARCH,beta.BNP.GARCH, alpha2.BNP,beta2.BNP)
+colnames(garch.parmeters.BNP)<- c("Alpha-GARCH", "Beta-GARCH", "Alpha-CAPM2", "Beta-CAPM2")
+rownames(garch.parmeters.BNP)<- c("Parámetros")
+garch.parmeters.BNP
+
+
+```
+
+
+
+
+```{r}
+
+plot(EX.BNP.garch11.fit, which=9)
+plot(EX.BNP.garch11.fit, which=10)
+plot(EX.BNP.garch11.fit, which=11)
+plot(EX.BNP.garch11.fit, which=12)
+```
+En este caso observamos que la ACF parece ser ruido blanco.
+
+### índices BNP
+
+
+
+```{r garch.ratio.BNP}
+sharpe.garch.BNP <-  mean(EX.BNP)/mean(sigma(EX.BNP.garch11.fit))
+treynor.garch.BNP <- mean(EX.BNP)/as.data.frame(coef(EX.BNP.garch11.fit)[6])
+jensen.garch.BNP <- as.data.frame(coef(EX.BNP.garch11.fit)[5])
+
+ind.capm.BNP<- cbind(sharpe.ratio.BNP,treynor.ratio.BNP,jensen.ratio.BNP)
+colnames(ind.capm.BNP) <- c("Sharpe", "Treynor", "Jensen")
+ind.garch.BNP<- cbind(sharpe.garch.BNP,treynor.garch.BNP,jensen.garch.BNP)
+colnames(ind.garch.BNP) <- c("Sharpe", "Treynor", "Jensen")
+compare.index.BNP <- rbind(ind.capm.BNP,ind.garch.BNP)
+rownames(compare.index.BNP)<- c("Ratios CAPM", "Ratios GARCH")
+compare.index.BNP
+```
+
+
+Como se puede observar, las ratio apriximadamente se duplican.
+
+# Apartado 5: relación de cointegración?
+
+En este apartado comprobaremos si existe alguna relación de cointegración entre los parámetros.
+
+
+Vamos a calcular los logaritmos de los precios:
+
+```{r log.prices}
+ldata <- log(fdata)
+ldata <- na.omit(ldata)
+
+lASML <- ldata$ASML
+lBAYN <- ldata$BAYN
+lBNP <- ldata$BNP
+
+
+```
+
+Vamos a convertir los datos a zoo:
+
+```{r zoo.convert}
+asml<-as.zoo(lASML)
+bayn<-as.zoo(lBAYN)
+bnp<-as.zoo(lBNP)
+```
+
+## Engle-Granger
+
+### ASML-BAYN~1
+
+**Primer paso:**
+```{r e1}
+e1 <- dynlm(asml ~ bayn)
+print(summary(e1))
+tsdisplay(e1$residuals)
+z1 <- e1$residuals
+```
+
+La ACF sugiere que los residuos no son estacionarios. Puede haber una raíz unitaria.
+
+
+**Segundo paso:**
+
+Aplicamos la ADF a $z1$
+
+1. Con constante y tendencia
+
+```{r z1.dft}
+z1.df3 <- ur.df(z1, type="trend", selectlags = "BIC")
+print(summary(z1.df3))
+plot(z1.df3)
+```
+
+NO podemos rechazar la $H_0$ por lo que parace que existe la raíz unitaria.
+
+Dado el valor crítico de  $\phi_3$ podemos eliminar la tendencia.
+
+```{r z1.dfc}
+z1.df2 <- ur.df(z1, type="drift", selectlags = "BIC")
+print(summary(z1.df2))
+plot(z1.df2)
+```
+
+Parece que no hay raíz unitaria por lo que **existe la cointegración**
+
+La constante parece no ser signiicativa, hay que tener en cuanta que a falta de constante los test se vuelven inestables. 
+
+Veamos el modelo sin constante:
+
+```{r z1.df}
+z1.df1 <- ur.df(z1, type="none", selectlags = "BIC")
+print(summary(z1.df1))
+plot(z1.df1)
+```
+Parece que no hay raíz unitaria por lo que **existe la cointegración**
+
+
+### ASML-BNP~2
+
+**Primer paso:**
+  
+```{r e2}
+e2 <- dynlm(asml ~ bnp)
+print(summary(e2))
+tsdisplay(e2$residuals)
+z2 <- e2$residuals
+```
+
+La ACF sugiere que los residuos no son estacionarios. Puede haber una raíz unitaria.
+
+
+**Segundo paso:**
+  
+  Aplicamos la ADF a $z2$
+  
+  1. Con constante y tendencia
+
+```{r z2.dft}
+z2.df3 <- ur.df(z2, type="trend", selectlags = "BIC")
+print(summary(z2.df3))
+plot(z2.df3)
+```
+
+NO podemos rechazar la $H_0$ por lo que parace que existe la raíz unitaria.
+
+Dado el valor crítico de  $\phi_3$ podemos eliminar la tendencia.
+
+```{r z2.dfc}
+z2.df2 <- ur.df(z2, type="drift", selectlags = "BIC")
+print(summary(z2.df2))
+plot(z2.df2)
+```
+
+Parece que  hay raíz unitaria por lo que **no existe la cointegración**
+  
+  La constante parece no ser signiicativa, hay que tener en cuanta que a falta de constante los test se vuelven inestables. 
+
+Veamos el modelo sin constante:
+  
+```{r z2.df}
+z2.df1 <- ur.df(z2, type="none", selectlags = "BIC")
+print(summary(z2.df1))
+plot(z2.df1)
+```
+Parece que  hay raíz unitaria por lo que **no existe la cointegración**
+  
+  
+### BAYN-BNP~3
+
+**Primer paso:**
+  
+```{r e3}
+e3 <- dynlm(bayn ~ bnp)
+print(summary(e3))
+tsdisplay(e3$residuals)
+z3 <- e3$residuals
+```
+
+La ACF sugiere que los residuos no son estacionarios. Puede haber una raíz unitaria.
+
+
+**Segundo paso:**
+  
+  Aplicamos la ADF a $z3$
+  
+  1. Con constante y tendencia
+
+```{r z3.dft}
+z3.df3 <- ur.df(z3, type="trend", selectlags = "BIC")
+print(summary(z3.df3))
+plot(z3.df3)
+```
+
+NO podemos rechazar la $H_0$ por lo que parace que existe la raíz unitaria.
+
+Dado el valor crítico de  $\phi_3$ podemos eliminar la tendencia.
+
+```{r z3.dfc}
+z3.df2 <- ur.df(z3, type="drift", selectlags = "BIC")
+print(summary(z3.df2))
+plot(z3.df2)
+```
+
+Parece que  hay raíz unitaria por lo que **no existe la cointegración**
+  
+  La constante parece no ser signiicativa, hay que tener en cuanta que a falta de constante los test se vuelven inestables. 
+
+Veamos el modelo sin constante:
+  
+```{r z3.df}
+z3.df1 <- ur.df(z3, type="none", selectlags = "BIC")
+print(summary(z3.df1))
+plot(z3.df1)
+```
+Parece que hay raíz unitaria por lo que **no existe la cointegración**
+  
+
+### BAYN -ASML~4
+
+**Primer paso:**
+  
+```{r e4}
+e4 <- dynlm(bayn ~ asml)
+print(summary(e4))
+tsdisplay(e4$residuals)
+z4 <- e4$residuals
+```
+
+La ACF sugiere que los residuos no son estacionarios. Puede haber una raíz unitaria.
+
+
+**Segundo paso:**
+  
+  Aplicamos la ADF a $z4$
+  
+  1. Con constante y tendencia
+
+```{r z4.dft}
+z4.df3 <- ur.df(z4, type="trend", selectlags = "BIC")
+print(summary(z4.df3))
+plot(z4.df3)
+```
+
+NO podemos rechazar la $H_0$ por lo que parace que existe la raíz unitaria.
+
+Dado el valor crítico de  $\phi_3$ podemos eliminar la tendencia.
+
+```{r z4.dfc}
+z4.df2 <- ur.df(z4, type="drift", selectlags = "BIC")
+print(summary(z4.df2))
+plot(z4.df2)
+```
+
+Parece que no hay raíz unitaria por lo que **existe la cointegración** al igual que regresando inversamente en el primer caso.
+  
+  La constante parece no ser signiicativa, hay que tener en cuanta que a falta de constante los test se vuelven inestables. 
+
+Veamos el modelo sin constante:
+  
+```{r z4.df}
+z4.df1 <- ur.df(z4, type="none", selectlags = "BIC")
+print(summary(z4.df1))
+plot(z4.df1)
+```
+Parece que no hay raíz unitaria por lo que **existe la cointegración**
+  
+  
+### BNP -ASML~5
+
+**Primer paso:**
+  
+```{r e5}
+e5 <- dynlm(bnp ~ asml)
+print(summary(e5))
+tsdisplay(e5$residuals)
+z5 <- e5$residuals
+```
+
+La ACF sugiere que los residuos no son estacionarios. Puede haber una raíz unitaria.
+
+
+**Segundo paso:**
+  
+  Aplicamos la ADF a $z5$
+  
+  1. Con constante y tendencia
+
+```{r z5.dft}
+z5.df3 <- ur.df(z5, type="trend", selectlags = "BIC")
+print(summary(z5.df3))
+plot(z5.df3)
+```
+
+NO podemos rechazar la $H_0$ por lo que parace que existe la raíz unitaria.
+
+Dado el valor crítico de  $\phi_3$ podemos eliminar la tendencia.
+
+```{r z5.dfc}
+z5.df2 <- ur.df(z5, type="drift", selectlags = "BIC")
+print(summary(z5.df2))
+plot(z5.df2)
+```
+
+Parece que  hay raíz unitaria por lo que **no existe la cointegración**
+  
+  La constante parece no ser signiicativa, hay que tener en cuanta que a falta de constante los test se vuelven inestables. 
+
+Veamos el modelo sin constante:
+  
+```{r z5.df}
+z5.df1 <- ur.df(z5, type="none", selectlags = "BIC")
+print(summary(z5.df1))
+plot(z5.df1)
+```
+Parece que hay raíz unitaria por lo que **existe la cointegración**
+  
+Aunque hay que subayar que este resultado no es muy fiable por la falta de la estabilidad en la pruba.
+
+### BNP -BAYN~6
+
+**Primer paso:**
+  
+```{r e6}
+e6 <- dynlm(bnp ~ bayn)
+print(summary(e6))
+tsdisplay(e6$residuals)
+z6 <- e6$residuals
+```
+
+La ACF sugiere que los residuos no son estacionarios. Puede haber una raíz unitaria.
+
+
+**Segundo paso:**
+  
+  Aplicamos la ADF a $z6$
+  
+  1. Con constante y tendencia
+
+```{r z6.dft}
+z6.df3 <- ur.df(z6, type="trend", selectlags = "BIC")
+print(summary(z6.df3))
+plot(z6.df3)
+```
+
+NO podemos rechazar la $H_0$ por lo que parace que existe la raíz unitaria.
+
+Dado el valor crítico de  $\phi_3$ podemos eliminar la tendencia.
+
+```{r z6.dfc}
+z6.df2 <- ur.df(z6, type="drift", selectlags = "BIC")
+print(summary(z6.df2))
+plot(z6.df2)
+```
+
+Parece que no hay raíz unitaria por lo que **existe la cointegración**
+  
+  La constante parece no ser signiicativa, hay que tener en cuanta que a falta de constante los test se vuelven inestables. 
+
+Veamos el modelo sin constante:
+  
+```{r z6.df}
+z6.df1 <- ur.df(z6, type="none", selectlags = "BIC")
+print(summary(z6.df1))
+plot(z6.df1)
+```
+Parece que no hay raíz unitaria por lo que **existe la cointegración**
+  
+  
