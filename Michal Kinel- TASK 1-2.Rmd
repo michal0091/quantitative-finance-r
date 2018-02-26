@@ -1,0 +1,906 @@
+---
+title: "TAREA 1- Ejercicio 2"
+author: "Michal Kinel"
+date: "18 de febrero de 2017"
+output: 
+  html_document:
+    toc: yes
+    number_sections: yes
+  html_notebook:
+    toc: yes
+    number_sections: yes
+  pdf_document:
+    toc: yes
+    number_sections: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Cargamos los paquetes
+
+```{r, message=FALSE, warning=FALSE}
+library(quantmod)
+library(forecast)
+library(zoo)
+library(sandwich)
+library(lmtest)
+library(urca)
+library(zoo)
+library(dygraphs)
+library(timeDate)
+library(dynlm)
+library(ggplot2)
+```
+
+
+# Datos
+
+## Índice bursátil
+
+Vamos a desscargar las datos de **London Stock Exchange 100** o **FTSE 100** *(^FTSE)* desde la web YaHoo Financial.
+
+```{r data-index , message=FALSE, warning=FALSE}
+getSymbols("^FTSE",from='2000-01-01/2016-09-01' )
+
+FTSE <- merge(FTSE$FTSE.Adjusted)
+names(FTSE) <- c("FTSE")
+lFTSE = log(FTSE) 
+```
+
+Represesentamos gráficamente la varable:
+
+```{r plot-index}
+dygraph(lFTSE, main = "log(FTSE)") %>% dyRangeSelector(dateWindow = c("2016-01-01", "2016-09-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)
+```
+
+
+
+## Tipos de interés
+
+Vamos a descargar los datos de **Treasury Constant Maturity Rate** con siguientes periodos de maduración:
+* 5 años
+* 7 años
+* 10 años
+
+Los datos se obtienen de la base de datos **FRED**
+
+```{r data-rates, message=FALSE, warning=FALSE}
+getSymbols("DGS5", src ="FRED")
+getSymbols("DGS7", src ="FRED")
+getSymbols("DGS10", src ="FRED")
+
+
+DGS5 <- DGS5['2000-01-01/2016-09-01']
+DGS7 <- DGS7['2000-01-01/2016-09-01']
+DGS10 <- DGS10['2000-01-01/2016-09-01']
+
+rates <- merge(DGS5, DGS7, DGS10, all = F)
+
+rates <- na.omit(rates)
+
+names(rates) <- c("DGS5","DGS7", "DGS10")
+
+names (rates)
+
+DGS5 <- rates$DGS5
+DGS7 <- rates$DGS7
+DGS10 <- rates$DGS10
+
+
+```
+
+```{r NAs-omit}
+rates <- na.omit(rates)
+```
+
+```{r plot-rates}
+dygraph(rates, main = "Treasury Constant Maturity Rate") %>% dyRangeSelector(dateWindow = c("2016-01-01", "2016-09-01"))%>%
+  dyOptions(stepPlot = TRUE)%>%
+  dyHighlight(highlightCircleSize = 5, 
+              highlightSeriesBackgroundAlpha = 0.2,
+              hideOnMouseOut = FALSE)%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)
+```
+
+
+
+## Variable Macroeconómica
+
+Vamos a descargar los datos de **Production in Total Manufacturing for UK (desestacionalizados)** de la base de datos **FRED** 
+Descargamos los datos para para el periodo 01-01-2000/01-09-2016 y nombramos nueva variable en logaritmos como **PTM**
+
+```{r data-macro, message=FALSE, warning=FALSE}
+getSymbols("GBRPROMANMISMEI", src = "FRED")
+
+
+GBRPROMANMISMEI <- GBRPROMANMISMEI['2000-01-01/2016-09-01']
+PTM = log(GBRPROMANMISMEI)
+```
+
+Representamos gráficamente:
+
+```{r}
+dygraph(PTM, main = "Production in Total Manufacturing for UK") %>% dyRangeSelector(dateWindow = c("2014-02-01", "2015-02-01"))%>%
+  dyOptions(fillGraph = TRUE, fillAlpha = 0.2)
+```
+
+
+
+# Conceptos teóricos del contraste de DICKY-FULLER
+
+Hay tres versiones principales de la **prueba de DICKY-FULLER**:
+* Prueba de raíz unitaria con deriva y tendencia temporal determinista:
+
+$$ (1) \qquad \Delta Y_t = a + \gamma t + b Y_{t-1} + \sum_{i=1}^p \beta_i \Delta Y_{t-i} + \epsilon_t $$
+
+* Prueba de raíz unitaria con la deriva:
+
+$$ (2) \qquad \Delta Y_t = a  + b Y_{t-1} + \sum_{i=1}^p \beta_i \Delta Y_{t-i} + \epsilon_t $$
+
+* Prueba de raíz unitaria sin deriva ni tendencia temporal determinista:
+
+$$ (3) \qquad \Delta Y_t = b Y_{t-1} + \sum_{i=1}^p \beta_i \Delta Y_{t-i} + \epsilon_t $$
+Se trata de unos estadísticos de potencia baja. Cuantos más parámetros tenemos menor será la potencia del modelo. 
+
+En primer lugar, tenemos que asegurar que $\epsilon_t$ sea ruido blanco, por lo que hay que tener cuidado al ajustar el número de retardos. En el caso que se pueda quitar la tendencia podemos mejorar el modelo en cuanto a su potencia. También, se podría quitar la constante, pero hay que tener cuidado que al quitar la constante el estadístico se vuelve inestable y, más aun, cuando aplicamos los valores críticos. 
+
+Estimación modelo 1: si rechazo la hipótesis nula entonces se trata de un proceso estacionario. EL problema es cuando no rechazo la hipótesis nula. Se puede tratar de dos cuestiones, (a) puede que resulte que si que se rechaza o (b) que hay poca potencia y se rechace por este mismo motivo. Se pueden hacer contrastes como el de $H_0:\gamma=0$, pero no se puede hacer solamente este contraste si no que $H_0: \gamma=b=0$. El contraste que se utiliza el estadístico F:
+$$\frac{\frac{(SCR^*-SCR)}{2}}{\frac{SCR}{(T-k)}}\stackrel{ H_0}{\rightarrow}F \rightarrow \chi^{2}_{(T-k)}$$
+
+
+Sin embargo, tenemos el problema de no estacionariedad, por lo que el estadístico a aplicar es el $\phi_3$( se puede rechazar o no la hipótesis nula). Además, hay otra cuestión, es que $H_0:b=0$ cuando rechazo hay que parar porque hay estacionariedad.
+Luego, hay que descartar que se comete el error de incluir la constante, por ello hay que hacer el contraste de que $H_0:b=a=0$; por lo que hay que aplicar el estadístico $\phi_1$, si rechazo la hipótesis nula entonces no puedo quitar la constante, pero si no la rechazo podría quitarla. Pero existe un peligro al quitar la constante, ya que puede ser que el contraste indica quitar la constante, pero no se puede omitir. 
+Tambien, puede tratarse que exista una tendencia cuadrática. Para ello se puede plantear la siguiente regresión:
+$$\Delta Y_t=\alpha+\epsilon_t$$
+Si $\alpha=0$ entonces hay que ir al modelo (2), si $\alpha\neq0$ entonces hay que volver al modelo (1).
+*Hay que tener en cuenta que los contrastes fallan, por lo que en el caso de duda hay que conservar la constante. Cuando se realiza el contraste Dickey-Fuller, lo que hay que comprobar que los ruidos de las regresiones son ruido blanco. También, puede que desaparezca la raíz unitaria al incrementar el número de regresiones.* 
+
+
+
+
+
+# Apartado 1.: Comprobar si las variables tienen raíces unitarias
+
+## ADF para FTSE 100
+
+```{r t3yFTSE}
+t3FTSE <- ur.df(lFTSE, type = "trend", selectlags = "AIC")
+plot(t3FTSE)
+
+```
+
+Información detellada del test de DF:
+
+```{r}
+print(t3FTSE@teststat)
+
+print(t3FTSE@cval)
+
+print(t3FTSE@testreg)
+```
+
+
+Observamos que el valor de $\tau$ es de $-3.015$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no podemos rechazar $H_0$ por lo que implicaría una raíz unitaria. El valor de $\phi_3$ es de $5.233$, el valor crítico nos indica que la tendencia no es necesaria, aunque el valor es muy ajustado.
+
+Puede  que exista una tendencia cuadrática. Para ello se puede plantear la siguiente regresión:
+$$\Delta Y_t=\alpha+\epsilon_t$$
+Si $\alpha=0$ entonces hay que ir al modelo (2), si $\alpha\neq0$ entonces hay que volver al modelo (1).
+
+```{r}
+ttFTSE <- 1:length(lFTSE)
+ttFTSE <- zoo(ttFTSE, as.Date(index(FTSE)))
+zlFTSE <- as.zoo(lFTSE)
+
+```
+
+```{r}
+m0FTSE <- dynlm(d(zlFTSE) ~ 1)
+print(summary(m0FTSE))
+```
+no podemos rechazar la hipótesis nula, entonces sabemos que la serie de tiempo no tiene una tendencia determinista y podemos así comenzar nuestro procedimiento de prueba ADF corriendo el modelo de regresión (2).
+
+Vamos a estimar el modelo con la constante pero sin  tendencia:
+
+```{r}
+t2FTSE <- ur.df(lFTSE, type = "drift", selectlags = "BIC")
+
+plot(t2FTSE)
+
+```
+
+```{r}
+print(t2FTSE@teststat)
+print(t2FTSE@cval)
+print(t2FTSE@testreg)
+
+```
+
+En este caso el valor de $\tau$ es $-2.13$ por lo que no rechazamos la $H_0$. Dado $\phi_1= 2.28$ no rechazamos la $H_0$ que la constante no es necesaria.
+
+Vamos a estimar el modelo sin la constante:
+
+```{r}
+t1FTSE <- ur.df(FTSE, type = "none", selectlags = "BIC")
+plot(t1FTSE)
+
+```
+
+
+```{r}
+print(t1FTSE@teststat)
+print(t1FTSE@cval)
+print(t1FTSE@testreg)
+```
+
+
+Parece ser que no podemos rechazar la hipótesis nula de que exista raíz unitaria.
+
+
+
+Vamos a comprobar los resíduos:
+
+```{r}
+t1FTSE <- ur.df(FTSE, type = "none", lags =6)
+print(summary(t1FTSE))
+plot(t1FTSE)
+
+```
+
+Luego si que hay raíz unitaria y habría que aplicar diferencias, veamos:
+
+```{r}
+dFTSE <- diff(FTSE,1)
+dFTSE <- na.omit(dFTSE)
+
+t3dFTSE <- ur.df(dFTSE, type = "trend", selectlags = "AIC")
+plot(t3dFTSE)
+print(t3dFTSE@teststat)
+print(t3dFTSE@cval)
+print(t3dFTSE@testreg)
+
+```
+
+Se comprueba que aplicando las diferencias no hay raíz unitaria. 
+
+## ADF para los tipos de interés
+
+### DGS5
+```{r t3LIBOR1M}
+t3DGS5 <- ur.df(DGS5, type = "trend", selectlags = "AIC")
+plot(t3DGS5)
+
+```
+
+```{r}
+print(t3DGS5@teststat)
+print(t3DGS5@cval)
+print(t3DGS5@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-2.577$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no podemos rechazar $H_0$ por lo que implicaría una raíz unitaria. El valor de $\phi_3$ es de $3.604$, el valor crítico nos indica que la tendencia no es necesaria.
+
+Vamos a estimar el modelo con la constante pero sin  tendencia:
+
+```{r}
+t2DGS5 <- ur.df(DGS5,type="drift", selectlags="BIC")
+
+plot(t2DGS5)
+```
+
+
+```{r}
+print(t2DGS5@teststat)
+print(t2DGS5@cval)
+print(t2DGS5@testreg)
+```
+
+En este caso el valor de $\tau$ es $-2.034$ por lo que no rechazamos la $H_0$. Dado $\phi_1= 2.902$ no rechazamos la $H_0$ que la constante no es necesaria.
+
+Vamos a estimar el modelo sin la constante:
+
+
+```{r}
+t1DGS5 <- ur.df(DGS5,type="none", selectlags="BIC")
+
+plot(t2DGS5)
+```
+
+
+
+```{r}
+print(t1DGS5@teststat)
+print(t1DGS5@cval)
+print(t1DGS5@testreg)
+```
+Dados los valores críticos rechazamos la hipótesis nula al 5 y 10 porcien de significación, pero no al 1%. Luego, podemos decir que no hay raíz unitaria al 5% de significación.
+
+Puede  que exista una tendencia cuadrática. Para ello se puede plantear la siguiente regresión:
+$$\Delta Y_t=\alpha+\epsilon_t$$
+Si $\alpha=0$ entonces hay que ir al modelo (2), si $\alpha\neq0$ entonces hay que volver al modelo (1).
+
+```{r}
+ttDGS5 <- 1:length(DGS5)
+ttDGS5 <- zoo(ttDGS5, as.Date(index(DGS5)))
+zDGS5 <- as.zoo(DGS5)
+
+```
+
+```{r}
+m0DGS5 <- dynlm(d(zDGS5) ~ 1)
+print(summary(m0DGS5))
+```
+no podemos rechazar la hipótesis nula, entonces sabemos que la serie de tiempo no tiene una tendencia determinista y podemos así comenzar nuestro procedimiento de prueba ADF corriendo el modelo de regresión (2).
+
+
+Veamos los errores:
+
+```{r}
+t1DGS5 <- ur.df(DGS5,type="none", lags=4)
+print(summary(t1DGS5))
+plot(t1DGS5)
+```
+
+
+### DGS7
+
+
+```{r}
+t3DGS7 <- ur.df(DGS7, type = "trend", selectlags = "AIC")
+plot(t3DGS7)
+
+```
+
+```{r}
+print(t3DGS7@teststat)
+print(t3DGS7@cval)
+print(t3DGS7@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-3.115$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no podemos rechazar $H_0$ por lo que implicaría una raíz unitaria. El valor de $\phi_3$ es de $5.034$, el valor crítico nos indica que la tendencia no es necesaria.
+
+Seguimos con el modelo (2):
+
+```{r}
+t2DGS7 <- ur.df(DGS7,type="drift", selectlags="BIC")
+
+plot(t2DGS7)
+```
+
+
+```{r}
+print(t2DGS7@teststat)
+print(t2DGS7@cval)
+print(t2DGS7@testreg)
+```
+
+En este caso el valor de $\tau$ es $-2.067$ por lo que no rechazamos la $H_0$. Dado $\phi_1= 2.935$ no rechazamos la $H_0$ que la constante no es necesaria.
+
+Vamos a estimar el modelo sin la constante:
+
+
+```{r}
+t1DGS7 <- ur.df(DGS7,type="none", selectlags="BIC")
+
+plot(t2DGS7)
+```
+
+
+
+```{r}
+print(t1DGS7@teststat)
+print(t1DGS7@cval)
+print(t1DGS7@testreg)
+```
+Dados los valores críticos rechazamos la hipótesis nula al 5 y 10 porcien de significación, pero no al 1%. Luego, podemos decir que no hay raíz unitaria al 5% de significación.
+
+Veamos los errores:
+
+```{r}
+t1DGS7 <- ur.df(DGS7,type="none", lags=4)
+print(summary(t1DGS7))
+plot(t1DGS7)
+```
+
+
+### DGS10
+
+```{r}
+t3DGS10 <- ur.df(DGS10, type = "trend", selectlags = "AIC")
+plot(t3DGS10)
+
+```
+
+```{r}
+print(t3DGS10@teststat)
+print(t3DGS10@cval)
+print(t3DGS10@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-3.641$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico rechazamos  $H_0$ al 5% por lo que no hay raíz unitaria. El valor de $\phi_3$ es de $6.7$, el valor crítico nos indica que la tendencia  es necesaria tanto al 5% como al 10%.
+
+
+## ADF par Production in Total Manufacturing
+
+
+
+```{r}
+t3PTM <- ur.df(PTM, type = "trend", selectlags = "AIC")
+plot(t3PTM)
+
+```
+
+```{r}
+print(t3PTM@teststat)
+print(t3PTM@cval)
+print(t3PTM@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-1.7$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no podemos rechazar  $H_0$ por lo que hay raíz unitaria. El valor de $\phi_3$ es de $6.7$, el valor crítico nos indica que la tendencia  no es necesaria.
+
+
+Puede  que exista una tendencia cuadrática. Para ello se puede plantear la siguiente regresión:
+$$\Delta Y_t=\alpha+\epsilon_t$$  
+
+Si $\alpha=0$ entonces hay que ir al modelo (2), si $\alpha\neq0$ entonces hay que volver al modelo (1).
+
+```{r}
+ttPTM <- 1:length(PTM)
+ttPTM <- zoo(ttPTM, as.Date(index(PTM)))
+zPTM <- as.zoo(PTM)
+
+```
+
+```{r}
+m0PTM <- dynlm(d(zPTM) ~ 1)
+print(summary(m0PTM))
+```
+no podemos rechazar la hipótesis nula, entonces sabemos que la serie de tiempo no tiene una tendencia determinista y podemos así comenzar nuestro procedimiento de prueba ADF corriendo el modelo de regresión (2).
+
+Procedemos al modelo (2), sin tendencia:
+
+```{r}
+t2PTM <- ur.df(PTM,type="drift", selectlags="BIC")
+
+plot(t2PTM)
+```
+
+
+```{r}
+print(t2PTM@teststat)
+print(t2PTM@cval)
+print(t2PTM@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-1.729$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no podemos rechazar  $H_0$ por lo que hay raíz unitaria. El valor de $\phi_1$ es de $1.582$, el valor crítico nos indica que la constante no es necesaria.
+
+
+Procedemos al modelo (1), sin constante:
+
+```{r}
+t1PTM <- ur.df(PTM,type="none", selectlags="BIC")
+
+plot(t1PTM)
+```
+
+
+
+```{r}
+print(t1PTM@teststat)
+print(t1PTM@cval)
+print(t1PTM@testreg)
+```
+
+Concluimos que hay raíz unitaria.
+
+
+
+Veamos los errores: 
+```{r}
+t1PTM <- ur.df(PTM,type="none", lags=4)
+print(summary(t1PTM))
+plot(t1PTM)
+```
+
+
+# Apartado 2: Diferenciales de tipos de interés y las raíces unitarias
+ 
+En este apartado vamos a crear las variables de los diferenciales de los tipos de LIBOR y posteriormente realizaremos la **prueba de Dicky-Fuller** para comprobar la existencia o no de las raíces unitarias.
+
+## Datos: creación de diferenciales
+
+```{r}
+dDGS7_5 <- DGS7 - DGS5
+dDGS10_5 <- DGS10 - DGS5
+dDGS10_7 <- DGS10 - DGS5
+```
+
+## Pruebas de raíces unitarias
+
+### Diferencial DGS7 - DGS5
+
+```{r}
+t3dDGS7_5 <- ur.df(dDGS7_5, type = "trend", selectlags = "AIC")
+plot(t3dDGS7_5)
+
+```
+
+```{r}
+print(t3dDGS7_5@teststat)
+print(t3dDGS7_5@cval)
+print(t3dDGS7_5@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-2.121$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no podemos rechazar  $H_0$ por lo que hay raíz unitaria. El valor de $\phi_3$ es de $2.458$, el valor crítico nos indica que la tendencia no es necesaria.
+
+
+Puede  que exista una tendencia cuadrática. Para ello se puede plantear la siguiente regresión:
+$$\Delta Y_t=\alpha+\epsilon_t$$  
+
+Si $\alpha=0$ entonces hay que ir al modelo (2), si $\alpha\neq0$ entonces hay que volver al modelo (1).
+
+```{r}
+zdDGS7_5 <- as.zoo(dDGS7_5)
+
+```
+
+```{r}
+m0dDGS7_5 <- dynlm(d(zdDGS7_5) ~ 1)
+print(summary(m0dDGS7_5))
+```
+no podemos rechazar la hipótesis nula, entonces sabemos que la serie de tiempo no tiene una tendencia determinista y podemos así comenzar nuestro procedimiento de prueba ADF corriendo el modelo de regresión (2).
+
+Procedemos al modelo (2), sin tendencia:
+
+```{r}
+t2dDGS7_5 <- ur.df(dDGS7_5,type="drift", selectlags="BIC")
+
+plot(t2dDGS7_5)
+```
+
+
+```{r}
+print(t2dDGS7_5@teststat)
+print(t2dDGS7_5@cval)
+print(t2dDGS7_5@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-2.213$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no podemos rechazar  $H_0$ por lo que hay raíz unitaria. El valor de $\phi_1$ es de $2.455$, el valor crítico nos indica que la constante  es no necesaria.
+
+
+Procedemos al modelo (1), sin constante:
+
+
+```{r}
+t1dDGS7_5 <- ur.df(dDGS7_5,type="none", selectlags="BIC")
+
+plot(t1dDGS7_5)
+```
+
+
+
+```{r}
+print(t1dDGS7_5@teststat)
+print(t1dDGS7_5@cval)
+print(t1dDGS7_5@testreg)
+```
+No se puede rechazar la hipótesis nula, por lo que hay raíz unitaria.
+
+veamos los errores:
+```{r}
+t1dDGS7_5 <- ur.df(dDGS7_5,type="none", lags=5)
+print(summary(t1dDGS7_5))
+
+plot(t1dDGS7_5)
+```
+
+
+### Diferencial DGS10 - DGS5
+
+```{r}
+t3dDGS10_5 <- ur.df(dDGS10_5, type = "trend", selectlags = "AIC")
+plot(t3dDGS10_5)
+
+```
+
+```{r}
+print(t3dDGS10_5@teststat)
+print(t3dDGS10_5@cval)
+print(t3dDGS10_5@testreg)
+```
+Observamos que el valor de $\tau$ es de $-1.587$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no podemos rechazar  $H_0$ por lo que hay raíz unitaria. El valor de $\phi_3$ es de $1.878$, el valor crítico nos indica que la tendencia  es no necesaria.
+
+Puede  que exista una tendencia cuadrática. Para ello se puede plantear la siguiente regresión:
+$$\Delta Y_t=\alpha+\epsilon_t$$  
+
+Si $\alpha=0$ entonces hay que ir al modelo (2), si $\alpha\neq0$ entonces hay que volver al modelo (1).
+
+
+```{r}
+zdDGS10_5 <- as.zoo(dDGS10_5)
+
+```
+
+```{r}
+m0dDGS10_5 <- dynlm(d(zdDGS10_5) ~ 1)
+print(summary(m0dDGS10_5))
+```
+no podemos rechazar la hipótesis nula, entonces sabemos que la serie de tiempo no tiene una tendencia determinista y podemos así comenzar nuestro procedimiento de prueba ADF corriendo el modelo de regresión (2).
+
+Procedemos al modelo (2), sin tendencia:
+
+```{r}
+t2dDGS10_5 <- ur.df(dDGS10_5,type="drift", selectlags="BIC")
+
+plot(t2dDGS10_5)
+```
+
+
+```{r}
+print(t2dDGS10_5@teststat)
+print(t2dDGS10_5@cval)
+print(t2dDGS10_5@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-1.909$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no podemos rechazar  $H_0$ por lo que hay raíz unitaria. El valor de $\phi_1$ es de $1.843$, el valor crítico nos indica que la constante  es no necesaria.
+
+
+Procedemos al modelo (1), sin constante:
+
+```{r}
+t1dDGS10_5 <- ur.df(dDGS10_5,type="none", selectlags="BIC")
+
+plot(t1dDGS10_5)
+```
+
+
+
+```{r}
+print(t1dDGS10_5@teststat)
+print(t1dDGS10_5@cval)
+print(t1dDGS10_5@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-.829$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no podemos rechazar  $H_0$ por lo que hay raíz unitaria. 
+
+veamos los errores:
+
+```{r}
+t1dDGS10_5 <- ur.df(dDGS10_5,type="none", lags=4)
+print(summary(t1dDGS10_5))
+
+plot(t1dDGS10_5)
+```
+
+
+### Diferencial DGS10 - DGS7
+
+```{r}
+t3dDGS10_7 <- ur.df(dDGS10_7, type = "trend", selectlags = "AIC")
+plot(t3dDGS10_7)
+
+```
+
+```{r}
+print(t3dDGS10_7@teststat)
+print(t3dDGS10_7@cval)
+print(t3dDGS10_7@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-1.587$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no podemos rechazar  $H_0$ por lo que hay raíz unitaria. El valor de $\phi_3$ es de $1.878$, el valor crítico nos indica que la tendencia  es no necesaria.
+
+
+Puede  que exista una tendencia cuadrática. Para ello se puede plantear la siguiente regresión:
+$$\Delta Y_t=\alpha+\epsilon_t$$  
+
+Si $\alpha=0$ entonces hay que ir al modelo (2), si $\alpha\neq0$ entonces hay que volver al modelo (1).
+
+
+```{r}
+zdDGS10_7 <- as.zoo(dDGS10_7)
+
+```
+
+```{r}
+m0dDGS10_7 <- dynlm(d(zdDGS10_7) ~ 1)
+print(summary(m0dDGS10_7))
+```
+no podemos rechazar la hipótesis nula, entonces sabemos que la serie de tiempo no tiene una tendencia determinista y podemos así comenzar nuestro procedimiento de prueba ADF corriendo el modelo de regresión (2).
+
+Procedemos al modelo (2), sin tendencia:
+
+```{r}
+t2dDGS10_7 <- ur.df(dDGS10_7,type="drift", selectlags="BIC")
+
+plot(t2dDGS10_7)
+```
+
+
+```{r}
+print(t2dDGS10_7@teststat)
+print(t2dDGS10_7@cval)
+print(t2dDGS10_7@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-1.909$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no podemos rechazar  $H_0$ por lo que hay raíz unitaria. El valor de $\phi_1$ es de $1.843$, el valor crítico nos indica que la constante  es no necesaria.
+
+
+Procedemos al modelo (1), sin constante:
+
+```{r}
+t1dDGS10_7 <- ur.df(dDGS10_7,type="none", selectlags="BIC")
+
+plot(t1dDGS10_7)
+```
+
+
+
+```{r}
+print(t1dDGS10_7@teststat)
+print(t1dDGS10_7@cval)
+print(t1dDGS10_7@testreg)
+```
+
+Concluimos que no podemos rechazar la hipótesis nula.
+
+Veamos los errores:
+
+```{r}
+t1dDGS10_7 <- ur.df(dDGS10_7,type="none", lags=4)
+print(summary(t1dDGS10_7))
+
+plot(t1dDGS10_7)
+```
+
+
+# Apartado 3: Tipos de interés reales y las raíces unitarias
+
+## Datos
+
+En primer lugar, vamos a descargar los datos de **Treasury Inflation-Indexed Security, Constant Maturity** desde la base de datos **FRED** para:
+* 5 años
+* 7 años
+* 10 años
+
+```{r , message=FALSE, warning=FALSE}
+getSymbols("DFII5", src = "FRED")
+getSymbols("DFII7", src = "FRED")
+getSymbols("DFII10", src = "FRED")
+
+DFII5  <- DFII5['2000-01-01/2016-09-01']
+DFII7  <- DFII7['2000-01-01/2016-09-01']
+DFII10 <- DFII10['2000-01-01/2016-09-01']
+
+
+``` 
+
+
+
+Ahora vamos a calcular el diferecial entre el tipo nominal y los índices de inflación:
+
+```{r}
+RDGS5 <- DGS5 - DFII5
+RDGS7  <- DGS7 - DFII7
+RDGS10 <- DGS10 - DFII10
+
+```
+
+
+## Test de Dicky-Fuller
+
+### Tipos reales a 5 años
+
+```{r}
+t3RDGS5 <- ur.df(RDGS5, type = "trend", selectlags = "AIC")
+plot(t3RDGS5)
+
+```
+
+```{r}
+print(t3RDGS5@teststat)
+print(t3RDGS5@cval)
+print(t3RDGS5@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-3.96$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico rechazamos  $H_0$ al 5 y al 10 por cien de significación, por lo que no hay raíz unitaria. El valor de $\phi_3$ es de $6.548$, el valor crítico nos indica que la tendencia  es necesaria.
+
+
+### Tipos reales a 7 años
+
+```{r}
+t3RDGS7 <- ur.df(RDGS7, type = "trend", selectlags = "AIC")
+plot(t3RDGS7)
+
+```
+
+```{r}
+print(t3RDGS7@teststat)
+print(t3RDGS7@cval)
+print(t3RDGS7@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-3.614$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico rechazamos  $H_0$ al 5 y al 10 por cien de significación, por lo que no hay raíz unitaria. El valor de $\phi_3$ es de $6.739$, el valor crítico nos indica que la tendencia  es necesaria.
+
+
+### Tipos reales a 10 años
+
+```{r}
+t3RDGS10 <- ur.df(RDGS10, type = "trend", selectlags = "AIC")
+plot(t3RDGS10)
+
+```
+
+```{r}
+print(t3RDGS10@teststat)
+print(t3RDGS10@cval)
+print(t3RDGS10@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-3.234$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no rechazamos  $H_0$, por lo que hay raíz unitaria. El valor de $\phi_3$ es de $5.585$, el valor crítico nos indica que la tendencia no es necesaria.
+
+
+
+Puede  que exista una tendencia cuadrática. Para ello se puede plantear la siguiente regresión:
+$$\Delta Y_t=\alpha+\epsilon_t$$  
+
+Si $\alpha=0$ entonces hay que ir al modelo (2), si $\alpha\neq0$ entonces hay que volver al modelo (1).
+
+
+```{r}
+zRDGS10 <- as.zoo(RDGS10)
+
+```
+
+```{r}
+m0RDGS10 <- dynlm(d(zRDGS10) ~ 1)
+print(summary(m0RDGS10))
+```
+no podemos rechazar la hipótesis nula, entonces sabemos que la serie de tiempo no tiene una tendencia determinista y podemos así comenzar nuestro procedimiento de prueba ADF corriendo el modelo de regresión (2).
+
+Pasamos al modelo (2)
+
+```{r}
+t2RDGS10 <- ur.df(RDGS10,type="drift", selectlags="BIC")
+
+plot(t2RDGS10)
+```
+
+
+```{r}
+print(t2RDGS10@teststat)
+print(t2RDGS10@cval)
+print(t2RDGS10@testreg)
+```
+
+Observamos que el valor de $\tau$ es de $-2.743$ *(coincide con el valor del estadístico t de la variable retardada)* y dado el valor crítico no rechazamos  $H_0$, por lo no hay raíz unitaria. El valor de $\phi_1$ es de $3.765$, el valor crítico nos indica que la constante no  es necesaria.
+
+
+Pasamos al modelos sin constente: 
+```{r}
+t1RDGS10 <- ur.df(RDGS10,type="none", selectlags="BIC")
+
+plot(t1RDGS10)
+```
+
+
+
+```{r}
+print(t1RDGS10@teststat)
+print(t1RDGS10@cval)
+print(t1RDGS10@testreg)
+```
+No se rechaza que no hay raíz unitaria7
+
+veamos los erores:
+
+```{r}
+t1RDGS10 <- ur.df(RDGS10,type="none", lags=4)
+print(summary(t1RDGS10))
+
+plot(t1RDGS10)
+```
+
+
